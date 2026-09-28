@@ -27,6 +27,13 @@ DB_PATH = Path(__file__).resolve().parent / "data" / "ping_monitor.db"
 MAX_HISTORY_PER_TARGET = 10_000
 
 SCHEMA = """
+CREATE TABLE IF NOT EXISTS groups (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL UNIQUE,
+    description TEXT,
+    created_at TEXT NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS targets (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL,
@@ -44,7 +51,10 @@ CREATE TABLE IF NOT EXISTS targets (
     telegram_custom INTEGER NOT NULL DEFAULT 0,
     telegram_template_down TEXT,
     telegram_template_up TEXT,
-    created_at TEXT NOT NULL
+    group_id INTEGER DEFAULT 1,
+    group_name TEXT NOT NULL DEFAULT 'Root',
+    created_at TEXT NOT NULL,
+    FOREIGN KEY (group_id) REFERENCES groups(id) ON DELETE SET NULL
 );
 
 CREATE TABLE IF NOT EXISTS monitoring_results (
@@ -113,8 +123,144 @@ def init_db() -> None:
         except sqlite3.OperationalError:
             pass
 
+        try:
+            conn.execute("ALTER TABLE targets ADD COLUMN group_id INTEGER DEFAULT 1")
+        except sqlite3.OperationalError:
+            pass
+
+        try:
+            conn.execute("ALTER TABLE targets ADD COLUMN group_name TEXT DEFAULT 'Root'")
+        except sqlite3.OperationalError:
+            pass
+
+        # Ensure default Root group exists
+        root_group = conn.execute("SELECT id, name FROM groups WHERE LOWER(name) = 'root'").fetchone()
+        if not root_group:
+            conn.execute(
+                "INSERT INTO groups (name, description, created_at) VALUES (?, ?, ?)",
+                ("Root", "Default root group", _now_iso())
+            )
+            root_group = conn.execute("SELECT id, name FROM groups WHERE LOWER(name) = 'root'").fetchone()
+        
+        root_id = root_group["id"]
+        root_name = root_group["name"]
+        conn.execute(
+            "UPDATE targets SET group_id = ?, group_name = ? WHERE group_id IS NULL OR group_name IS NULL",
+            (root_id, root_name)
+        )
+
+
+# --- Groups ------------------------------------------------------------
+
+def create_group(name: str, description: Optional[str] = None) -> dict[str, Any]:
+    with get_conn() as conn:
+        cur = conn.execute(
+            "INSERT INTO groups (name, description, created_at) VALUES (?, ?, ?)",
+            (name.strip(), description.strip() if description else None, _now_iso())
+        )
+        group_id = cur.lastrowid
+        row = conn.execute("SELECT * FROM groups WHERE id = ?", (group_id,)).fetchone()
+        res = dict(row)
+        res["target_count"] = 0
+        return res
+
+
+def list_groups() -> list[dict[str, Any]]:
+    with get_conn() as conn:
+        rows = conn.execute(
+            "SELECT g.*, COUNT(t.id) AS target_count "
+            "FROM groups g "
+            "LEFT JOIN targets t ON (t.group_id = g.id OR (t.group_id IS NULL AND LOWER(g.name) = 'root')) "
+            "GROUP BY g.id "
+            "ORDER BY CASE WHEN LOWER(g.name) = 'root' THEN 0 ELSE 1 END, g.name ASC"
+        ).fetchall()
+        return [dict(r) for r in rows]
+
+
+def get_group(group_id: int) -> Optional[dict[str, Any]]:
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT g.*, COUNT(t.id) AS target_count "
+            "FROM groups g "
+            "LEFT JOIN targets t ON (t.group_id = g.id OR (t.group_id IS NULL AND LOWER(g.name) = 'root')) "
+            "WHERE g.id = ? "
+            "GROUP BY g.id",
+            (group_id,)
+        ).fetchone()
+        return dict(row) if row else None
+
+
+def get_group_by_name(name: str) -> Optional[dict[str, Any]]:
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT g.*, COUNT(t.id) AS target_count "
+            "FROM groups g "
+            "LEFT JOIN targets t ON (t.group_id = g.id OR (t.group_id IS NULL AND LOWER(g.name) = 'root')) "
+            "WHERE LOWER(g.name) = LOWER(?) "
+            "GROUP BY g.id",
+            (name.strip(),)
+        ).fetchone()
+        return dict(row) if row else None
+
+
+def update_group(group_id: int, **fields: Any) -> Optional[dict[str, Any]]:
+    if not fields:
+        return get_group(group_id)
+    allowed = {"name", "description"}
+    updates = {k: v for k, v in fields.items() if k in allowed}
+    if not updates:
+        return get_group(group_id)
+    if "name" in updates and updates["name"]:
+        updates["name"] = updates["name"].strip()
+    if "description" in updates and updates["description"]:
+        updates["description"] = updates["description"].strip()
+    
+    set_clause = ", ".join(f"{k} = ?" for k in updates)
+    values = list(updates.values()) + [group_id]
+    with get_conn() as conn:
+        conn.execute(f"UPDATE groups SET {set_clause} WHERE id = ?", values)
+        if "name" in updates and updates["name"]:
+            conn.execute("UPDATE targets SET group_name = ? WHERE group_id = ?", (updates["name"], group_id))
+    return get_group(group_id)
+
+
+def delete_group(group_id: int) -> bool:
+    with get_conn() as conn:
+        group = conn.execute("SELECT * FROM groups WHERE id = ?", (group_id,)).fetchone()
+        if not group or group["name"].lower() == "root":
+            return False
+        
+        root_group = conn.execute("SELECT id, name FROM groups WHERE LOWER(name) = 'root'").fetchone()
+        root_id = root_group["id"] if root_group else 1
+        root_name = root_group["name"] if root_group else "Root"
+        
+        # Reassign targets to Root group
+        conn.execute("UPDATE targets SET group_id = ?, group_name = ? WHERE group_id = ?", (root_id, root_name, group_id))
+        cur = conn.execute("DELETE FROM groups WHERE id = ?", (group_id,))
+        return cur.rowcount > 0
+
 
 # --- Targets -----------------------------------------------------------
+
+def _resolve_target_group(conn: sqlite3.Connection, group_id: Optional[int] = None, group_name: Optional[str] = None) -> tuple[int, str]:
+    if group_id is not None:
+        grow = conn.execute("SELECT id, name FROM groups WHERE id = ?", (group_id,)).fetchone()
+        if grow:
+            return grow["id"], grow["name"]
+    if group_name is not None and group_name.strip():
+        grow = conn.execute("SELECT id, name FROM groups WHERE LOWER(name) = LOWER(?)", (group_name.strip(),)).fetchone()
+        if grow:
+            return grow["id"], grow["name"]
+        else:
+            cur_g = conn.execute("INSERT INTO groups (name, description, created_at) VALUES (?, NULL, ?)", (group_name.strip(), _now_iso()))
+            return cur_g.lastrowid, group_name.strip()
+    
+    root = conn.execute("SELECT id, name FROM groups WHERE LOWER(name) = 'root'").fetchone()
+    if root:
+        return root["id"], root["name"]
+    cur_g = conn.execute("INSERT INTO groups (name, description, created_at) VALUES ('Root', 'Default root group', ?)", (_now_iso(),))
+    return cur_g.lastrowid, "Root"
+
 
 def create_target(
     name: str, host: str, interval: int, count: int, timeout: float, enabled: bool,
@@ -122,19 +268,22 @@ def create_target(
     telegram_token: Optional[str] = None, telegram_chat_id: Optional[str] = None,
     telegram_notify_down: bool = True, telegram_notify_up: bool = True,
     telegram_custom: bool = False, telegram_template_down: Optional[str] = None,
-    telegram_template_up: Optional[str] = None
+    telegram_template_up: Optional[str] = None,
+    group_id: Optional[int] = None,
+    group_name: Optional[str] = None,
 ) -> dict[str, Any]:
     with get_conn() as conn:
+        resolved_group_id, resolved_group_name = _resolve_target_group(conn, group_id, group_name)
         cur = conn.execute(
             "INSERT INTO targets (name, host, interval, count, timeout, enabled, "
             "telegram_enabled, telegram_name, telegram_token, telegram_chat_id, "
             "telegram_notify_down, telegram_notify_up, telegram_custom, "
-            "telegram_template_down, telegram_template_up, created_at) "
-            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
+            "telegram_template_down, telegram_template_up, group_id, group_name, created_at) "
+            "VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
             (name, host, interval, count, timeout, int(enabled),
              int(telegram_enabled), telegram_name, telegram_token, telegram_chat_id,
              int(telegram_notify_down), int(telegram_notify_up), int(telegram_custom),
-             telegram_template_down, telegram_template_up, _now_iso()),
+             telegram_template_down, telegram_template_up, resolved_group_id, resolved_group_name, _now_iso()),
         )
         target_id = cur.lastrowid
         row = conn.execute("SELECT * FROM targets WHERE id = ?", (target_id,)).fetchone()
@@ -160,7 +309,8 @@ def update_target(target_id: int, **fields: Any) -> Optional[dict[str, Any]]:
     allowed = {"name", "host", "interval", "count", "timeout", "enabled", 
                "telegram_enabled", "telegram_name", "telegram_token", 
                "telegram_chat_id", "telegram_notify_down", "telegram_notify_up", 
-               "telegram_custom", "telegram_template_down", "telegram_template_up"}
+               "telegram_custom", "telegram_template_down", "telegram_template_up",
+               "group_id", "group_name"}
     updates = {k: v for k, v in fields.items() if k in allowed and v is not None}
     
     # Allow explicitly setting optional fields to None/False
@@ -171,21 +321,26 @@ def update_target(target_id: int, **fields: Any) -> Optional[dict[str, Any]]:
     if not updates:
         return get_target(target_id)
 
-    if "enabled" in updates and updates["enabled"] is not None:
-        updates["enabled"] = int(updates["enabled"])
-    if "telegram_enabled" in updates and updates["telegram_enabled"] is not None:
-        updates["telegram_enabled"] = int(updates["telegram_enabled"])
-    if "telegram_notify_down" in updates and updates["telegram_notify_down"] is not None:
-        updates["telegram_notify_down"] = int(updates["telegram_notify_down"])
-    if "telegram_notify_up" in updates and updates["telegram_notify_up"] is not None:
-        updates["telegram_notify_up"] = int(updates["telegram_notify_up"])
-    if "telegram_custom" in updates and updates["telegram_custom"] is not None:
-        updates["telegram_custom"] = int(updates["telegram_custom"])
-
-    set_clause = ", ".join(f"{k} = ?" for k in updates)
-    values = list(updates.values()) + [target_id]
-
     with get_conn() as conn:
+        if "group_id" in updates or "group_name" in updates:
+            gid, gname = _resolve_target_group(conn, updates.get("group_id"), updates.get("group_name"))
+            updates["group_id"] = gid
+            updates["group_name"] = gname
+
+        if "enabled" in updates and updates["enabled"] is not None:
+            updates["enabled"] = int(updates["enabled"])
+        if "telegram_enabled" in updates and updates["telegram_enabled"] is not None:
+            updates["telegram_enabled"] = int(updates["telegram_enabled"])
+        if "telegram_notify_down" in updates and updates["telegram_notify_down"] is not None:
+            updates["telegram_notify_down"] = int(updates["telegram_notify_down"])
+        if "telegram_notify_up" in updates and updates["telegram_notify_up"] is not None:
+            updates["telegram_notify_up"] = int(updates["telegram_notify_up"])
+        if "telegram_custom" in updates and updates["telegram_custom"] is not None:
+            updates["telegram_custom"] = int(updates["telegram_custom"])
+
+        set_clause = ", ".join(f"{k} = ?" for k in updates)
+        values = list(updates.values()) + [target_id]
+
         conn.execute(f"UPDATE targets SET {set_clause} WHERE id = ?", values)
         row = conn.execute("SELECT * FROM targets WHERE id = ?", (target_id,)).fetchone()
         return dict(row) if row else None

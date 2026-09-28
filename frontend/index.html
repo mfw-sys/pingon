@@ -1123,6 +1123,10 @@ a {
         <i data-lucide="server"></i>
         <span>Targets</span>
       </div>
+      <div class="nav-item" data-view="groups" title="Groups">
+        <i data-lucide="folder-tree"></i>
+        <span>Groups</span>
+      </div>
       <div class="nav-item admin-only hidden" data-view="users" title="Users">
         <i data-lucide="users"></i>
         <span>Users</span>
@@ -1237,6 +1241,37 @@ a {
         </div>
       </section>
 
+      <!-- ============ GROUPS VIEW ============ -->
+      <section id="view-groups" class="hidden">
+        <div class="card p-0 overflow-hidden mb-6">
+          <div class="px-5 py-4 border-b flex items-center justify-between" style="border-color: var(--glass-border);">
+            <div>
+              <h2 class="text-sm font-semibold m-0">Target Groups</h2>
+              <p class="label mt-1">Organize and categorize monitoring targets into logical groups</p>
+            </div>
+            <button class="btn btn-primary admin-only hidden" id="btn-add-group" style="height: 36px; padding: 0 16px;">
+              <i data-lucide="plus" style="width: 14px; height: 14px;"></i> Add Group
+            </button>
+          </div>
+          <div class="overflow-x-auto">
+            <table class="data-table w-full">
+              <thead>
+                <tr>
+                  <th style="width: 25%;">Group Name</th>
+                  <th style="width: 35%;">Description</th>
+                  <th style="width: 15%;">Targets</th>
+                  <th style="width: 15%;">Created At</th>
+                  <th style="width: 10%; text-align: right;">Actions</th>
+                </tr>
+              </thead>
+              <tbody id="table-groups">
+                <!-- Group rows rendered here -->
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
       <!-- ============ TARGET DETAIL VIEW ============ -->
       <section id="view-detail" class="hidden">
         <button class="btn btn-ghost mb-4" id="btn-back-to-targets">
@@ -1246,7 +1281,13 @@ a {
         <div class="card mb-6">
           <div class="flex items-start justify-between flex-wrap gap-4">
             <div>
-              <h2 class="text-xl mb-1" id="detail-name">--</h2>
+              <div class="flex items-center gap-2 mb-1 flex-wrap">
+                <h2 class="text-xl m-0" id="detail-name">--</h2>
+                <span class="badge" id="detail-group-badge" style="background: rgba(255, 255, 255, 0.07); color: var(--text-secondary); border-color: var(--glass-border);">
+                  <i data-lucide="folder" style="width: 12px; height: 12px;"></i>
+                  <span id="detail-group">Root</span>
+                </span>
+              </div>
               <p class="mono" style="color: var(--text-secondary);" id="detail-host">--</p>
             </div>
             <div class="flex flex-col items-end gap-3">
@@ -1553,6 +1594,32 @@ a {
   </div>
 </div>
 
+<!-- Add / Edit Group Modal -->
+<div class="modal-overlay hidden" id="modal-group">
+  <div class="modal-box" style="max-width: 440px;">
+    <div class="flex items-center justify-between mb-4">
+      <h3 class="text-base" id="modal-group-title">Add Group</h3>
+      <button type="button" class="btn-icon" id="modal-group-close"><i data-lucide="x"></i></button>
+    </div>
+    <form id="form-group" novalidate>
+      <input type="hidden" id="input-group-id" />
+      <div class="field" id="field-group-name">
+        <label for="input-group-name">Group Name</label>
+        <input type="text" id="input-group-name" placeholder="e.g. Core Routers, Production" />
+        <p class="error-text" id="group-name-error-text">Group name is required.</p>
+      </div>
+      <div class="field" id="field-group-desc">
+        <label for="input-group-desc">Description <span class="text-muted" style="font-size:0.75rem; font-weight: normal;">(Optional)</span></label>
+        <textarea id="input-group-desc" rows="3" placeholder="Brief description of this group..." style="width: 100%; border-radius: var(--radius-sm); border: 1px solid var(--glass-border); background: var(--input-bg); color: var(--text-primary); padding: 8px 12px; outline: none; resize: vertical;"></textarea>
+      </div>
+      <div class="flex justify-end gap-2 mt-6">
+        <button type="button" class="btn btn-ghost" id="modal-group-cancel">Cancel</button>
+        <button type="submit" class="btn btn-primary" id="modal-group-submit">Save Group</button>
+      </div>
+    </form>
+  </div>
+</div>
+
 <!-- Add / Edit Target Modal -->
 <div class="modal-overlay hidden" id="modal-target">
   <div class="modal-box">
@@ -1565,6 +1632,15 @@ a {
         <label>Name</label>
         <input type="text" id="input-name" placeholder="Google DNS" />
         <p class="error-text">Name is required.</p>
+      </div>
+      <div class="field" id="field-target-group">
+        <div class="flex items-center justify-between mb-1">
+          <label for="input-target-group" class="mb-0">Group <span class="text-muted" style="font-size:0.75rem; font-weight: normal;">(Optional)</span></label>
+          <span class="text-xs text-muted">Default: <strong>Root</strong></span>
+        </div>
+        <select id="input-target-group" class="w-full" style="height: 40px; border-radius: var(--radius-sm); border: 1px solid var(--glass-border); background: var(--input-bg); color: var(--text-primary); padding: 0 12px; outline: none;">
+          <!-- Options populated dynamically -->
+        </select>
       </div>
       <div class="field" id="field-host">
         <label>IP Address / Hostname</label>
@@ -1774,8 +1850,92 @@ function isAuthenticated() {
 
 function logout() {
   clearToken();
+  sessionStorage.removeItem("pingon_last_activity");
   sessionStorage.setItem("just_logged_out", "1");
   window.location.href = "/login.html?from=logout";
+}
+
+/* ------------------------------------------------ Idle Auto-Logout -- */
+const IDLE_TIMEOUT_MS      = 60 * 60 * 1000;   // 1 hour
+const IDLE_WARNING_MS      = 55 * 60 * 1000;   // warn at 55 min
+const IDLE_CHECK_INTERVAL  = 30 * 1000;         // check every 30s
+
+let _idleWarningShown = false;
+let _idleCheckTimer   = null;
+
+function _touchActivity() {
+  sessionStorage.setItem("pingon_last_activity", Date.now().toString());
+  if (_idleWarningShown) {
+    _idleWarningShown = false;
+    // Dismiss any visible idle-warning toast
+    document.querySelectorAll(".toast-idle-warning").forEach(el => el.remove());
+  }
+}
+
+function _getLastActivity() {
+  const ts = sessionStorage.getItem("pingon_last_activity");
+  return ts ? parseInt(ts, 10) : Date.now();
+}
+
+function _checkIdleTimeout() {
+  if (!isAuthenticated()) return;
+
+  const elapsed = Date.now() - _getLastActivity();
+
+  if (elapsed >= IDLE_TIMEOUT_MS) {
+    clearInterval(_idleCheckTimer);
+    clearToken();
+    sessionStorage.removeItem("pingon_last_activity");
+    sessionStorage.setItem("idle_logout", "1");
+    window.location.href = "/login.html?from=idle";
+    return;
+  }
+
+  if (elapsed >= IDLE_WARNING_MS && !_idleWarningShown) {
+    _idleWarningShown = true;
+    const remainMin = Math.ceil((IDLE_TIMEOUT_MS - elapsed) / 60000);
+    _showIdleWarningToast(remainMin);
+  }
+}
+
+function _showIdleWarningToast(minutes) {
+  // Reuse the app's toast system if available, otherwise create one
+  if (typeof showToast === "function") {
+    showToast(`⏳ Tidak ada aktivitas — sesi akan berakhir dalam ${minutes} menit. Gerakkan mouse atau tekan tombol untuk tetap login.`, "warning", 15000);
+    return;
+  }
+  // Fallback: create a simple warning element
+  const el = document.createElement("div");
+  el.className = "toast-idle-warning";
+  el.style.cssText = "position:fixed;top:16px;right:16px;z-index:9999;padding:12px 20px;border-radius:8px;background:#f59e0b;color:#000;font-size:14px;box-shadow:0 4px 12px rgba(0,0,0,.3);";
+  el.textContent = `⏳ Sesi berakhir dalam ${minutes} menit — gerakkan mouse untuk tetap login.`;
+  document.body.appendChild(el);
+  setTimeout(() => el.remove(), 15000);
+}
+
+function initIdleAutoLogout() {
+  if (!isAuthenticated()) return;
+
+  // Set initial activity timestamp
+  if (!sessionStorage.getItem("pingon_last_activity")) {
+    _touchActivity();
+  }
+
+  // Activity events — passive to avoid performance impact
+  const events = ["mousemove", "mousedown", "keydown", "scroll", "touchstart", "click"];
+  // Throttle: update at most once per 15s to avoid excessive writes
+  let _lastTouch = 0;
+  const throttledTouch = () => {
+    const now = Date.now();
+    if (now - _lastTouch > 15000) {
+      _lastTouch = now;
+      _touchActivity();
+    }
+  };
+  events.forEach(evt => document.addEventListener(evt, throttledTouch, { passive: true }));
+
+  // Periodic idle check
+  _idleCheckTimer = setInterval(_checkIdleTimeout, IDLE_CHECK_INTERVAL);
 }
 
 const currentUser = {
@@ -1926,7 +2086,7 @@ function statusBadge(status) {
 
 function switchView(view) {
   state.view = view;
-  ["dashboard", "targets", "detail", "users", "backups"].forEach((v) => {
+  ["dashboard", "targets", "groups", "detail", "users", "backups"].forEach((v) => {
     const el = qs(`view-${v}`);
     if (el) el.classList.toggle("hidden", v !== view);
   });
@@ -1936,6 +2096,7 @@ function switchView(view) {
   const titles = { 
     dashboard: "Dashboard", 
     targets: "Targets", 
+    groups: "Target Groups",
     detail: "Target Detail", 
     users: "User Management",
     backups: "Database Backups" 
@@ -1943,10 +2104,192 @@ function switchView(view) {
   qs("page-title").textContent = titles[view] || "Dashboard";
   closeMobileNav();
   
-  if (view === "users") {
+  if (view === "groups") {
+    fetchGroups();
+  } else if (view === "users") {
     fetchUsers();
   } else if (view === "backups") {
     fetchBackups();
+  }
+}
+
+/* --------------------------------------------------- Target Groups ---- */
+
+let groupsCache = [];
+
+async function fetchGroups() {
+  const tbody = qs("table-groups");
+  if (!tbody) return;
+
+  try {
+    const groups = await api("/api/groups");
+    groupsCache = groups;
+    renderGroupsTable(groups);
+  } catch (err) {
+    showToast("down", "Failed to load groups", err.message);
+  }
+}
+
+function renderGroupsTable(groups) {
+  const tbody = qs("table-groups");
+  if (!tbody) return;
+
+  if (!groups.length) {
+    tbody.innerHTML = `<tr><td colspan="5" class="text-center py-6 text-muted">No groups found. Click "Add Group" to create one.</td></tr>`;
+    return;
+  }
+
+  tbody.innerHTML = groups.map(g => {
+    const isRoot = (g.name || "").toLowerCase() === "root";
+    const rootBadge = isRoot ? `<span class="badge" style="background: rgba(76, 106, 255, 0.15); color: #8ba4ff; border-color: rgba(76, 106, 255, 0.25); font-size: 0.7rem; padding: 1px 6px;">Default</span>` : "";
+    const dt = new Date(g.created_at);
+    const dateStr = isNaN(dt.getTime()) ? "--" : dt.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
+    
+    const adminActions = currentUser.role === "administrator" ? `
+      <div class="flex items-center justify-end gap-1">
+        <button class="btn-icon" title="Edit Group" onclick="openGroupModal(${g.id})"><i data-lucide="edit-2"></i></button>
+        <button class="btn-icon icon-btn-danger" title="${isRoot ? 'Cannot delete default Root group' : 'Delete Group'}" onclick="deleteGroup(${g.id})" ${isRoot ? 'disabled' : ''}><i data-lucide="trash-2"></i></button>
+      </div>
+    ` : "";
+
+    return `
+      <tr>
+        <td>
+          <div class="font-medium flex items-center gap-2">
+            <i data-lucide="folder" style="width: 16px; height: 16px; color: var(--navy-soft);"></i>
+            <span class="row-name">${escapeHtml(g.name)}</span>
+            ${rootBadge}
+          </div>
+        </td>
+        <td><span class="text-sm text-secondary">${escapeHtml(g.description || "—")}</span></td>
+        <td><span class="badge" style="background: rgba(255, 255, 255, 0.05); color: var(--text-primary); font-family: var(--font-mono);">${g.target_count} target${g.target_count === 1 ? '' : 's'}</span></td>
+        <td><span class="text-sm text-muted">${dateStr}</span></td>
+        <td class="text-right">${adminActions}</td>
+      </tr>
+    `;
+  }).join("");
+
+  if (window.lucide) lucide.createIcons();
+}
+
+function openGroupModal(groupId = null) {
+  const modal = qs("modal-group");
+  const isEdit = !!groupId;
+  qs("modal-group-title").textContent = isEdit ? "Edit Group" : "Add Group";
+  qs("modal-group-submit").textContent = isEdit ? "Save Changes" : "Add Group";
+  qs("input-group-id").value = groupId || "";
+  qs("input-group-name").value = "";
+  qs("input-group-desc").value = "";
+  qs("field-group-name")?.classList.remove("has-error");
+
+  if (groupId) {
+    const existing = groupsCache.find(g => g.id === groupId);
+    if (existing) {
+      qs("input-group-name").value = existing.name;
+      qs("input-group-desc").value = existing.description || "";
+      qs("input-group-name").disabled = existing.name.toLowerCase() === "root";
+    } else {
+      api(`/api/groups/${groupId}`).then(g => {
+        qs("input-group-name").value = g.name;
+        qs("input-group-desc").value = g.description || "";
+        qs("input-group-name").disabled = g.name.toLowerCase() === "root";
+      }).catch(err => showToast("down", "Error", err.message));
+    }
+  } else {
+    qs("input-group-name").disabled = false;
+  }
+
+  modal.classList.remove("hidden");
+  if (window.lucide) lucide.createIcons();
+  setTimeout(() => qs("input-group-name")?.focus(), 50);
+}
+
+function closeGroupModal() {
+  qs("modal-group")?.classList.add("hidden");
+  qs("field-group-name")?.classList.remove("has-error");
+}
+
+async function submitGroupForm(e) {
+  e.preventDefault();
+  qs("field-group-name")?.classList.remove("has-error");
+
+  const name = qs("input-group-name").value.trim();
+  const description = qs("input-group-desc").value.trim() || null;
+  const groupId = qs("input-group-id").value;
+
+  if (!name) {
+    qs("field-group-name")?.classList.add("has-error");
+    qs("group-name-error-text").textContent = "Group name is required.";
+    return;
+  }
+
+  const btn = qs("modal-group-submit");
+  const originalText = btn.textContent;
+  btn.disabled = true;
+  btn.innerHTML = `<i data-lucide="loader-2" style="width:16px;height:16px;animation:spin 0.7s linear infinite;"></i> Saving\u2026`;
+  if (window.lucide) lucide.createIcons();
+
+  try {
+    if (groupId) {
+      const payload = { description };
+      if (!qs("input-group-name").disabled) {
+        payload.name = name;
+      }
+      await api(`/api/groups/${groupId}`, { method: "PUT", body: JSON.stringify(payload) });
+      showToast("up", "✓ Group Updated", `Group "${name}" has been updated.`);
+    } else {
+      await api("/api/groups", { method: "POST", body: JSON.stringify({ name, description }) });
+      showToast("up", "✓ Group Created", `Group "${name}" has been created.`);
+    }
+    closeGroupModal();
+    await fetchGroups();
+    await fetchDashboard();
+  } catch (err) {
+    if (err.status === 409) {
+      qs("field-group-name")?.classList.add("has-error");
+      qs("group-name-error-text").textContent = `Group '${name}' already exists.`;
+    } else {
+      showToast("down", "✕ Failed to save group", err.message);
+    }
+  } finally {
+    btn.disabled = false;
+    btn.textContent = originalText;
+    if (window.lucide) lucide.createIcons();
+  }
+}
+
+async function deleteGroup(groupId) {
+  const group = groupsCache.find(g => g.id === groupId);
+  const name = group ? group.name : `ID ${groupId}`;
+  
+  if (!confirm(`Are you sure you want to delete group "${name}"?\n\nAny targets currently in this group will be moved to the Root group.`)) {
+    return;
+  }
+
+  try {
+    await api(`/api/groups/${groupId}`, { method: "DELETE" });
+    showToast("up", "✓ Group Deleted", `Group "${name}" removed. Targets moved to Root.`);
+    await fetchGroups();
+    await fetchDashboard();
+  } catch (err) {
+    showToast("down", "✕ Failed to delete group", err.message);
+  }
+}
+
+async function populateGroupSelect(selectedGroupId = null) {
+  const select = qs("input-target-group");
+  if (!select) return;
+
+  try {
+    const groups = await api("/api/groups");
+    groupsCache = groups;
+    select.innerHTML = groups.map(g => {
+      const isRoot = g.name.toLowerCase() === "root";
+      const isSelected = selectedGroupId ? (g.id === selectedGroupId) : isRoot;
+      return `<option value="${g.id}" ${isSelected ? 'selected' : ''}>${escapeHtml(g.name)}${isRoot ? ' (Default)' : ''}</option>`;
+    }).join("");
+  } catch (err) {
+    select.innerHTML = `<option value="1" selected>Root (Default)</option>`;
   }
 }
 
@@ -2417,6 +2760,7 @@ function targetRowHtml(t) {
   return `
     <tr data-id="${t.id}">
       <td class="row-name">${escapeHtml(t.name)}</td>
+      <td><span class="badge" style="background: rgba(255, 255, 255, 0.06); color: var(--text-secondary); border-color: rgba(255,255,255,0.1); font-size: 0.75rem;"><i data-lucide="folder" style="width:11px;height:11px;"></i>${escapeHtml(t.group_name || 'Root')}</span></td>
       <td class="mono" style="color: var(--text-secondary);">${escapeHtml(t.host)}</td>
       <td class="mono">${isPaused ? "--" : fmtLatency(t.latency_avg)}</td>
       <td class="mono">${isPaused ? "--" : fmtLoss(t.packet_loss)}</td>
@@ -2470,7 +2814,7 @@ function renderTable(containerEl, targets) {
           <table class="data-table">
             <thead>
               <tr>
-                <th>Name</th><th>Host</th><th>Latency</th>
+                <th>Name</th><th>Group</th><th>Host</th><th>Latency</th>
                 <th>Packet Loss</th><th>Last Check</th><th style="text-align:right;">Actions</th>
               </tr>
             </thead>
@@ -2542,6 +2886,7 @@ function renderSkeletonTable(containerEl) {
   const skeletonRow = () => `
     <tr>
       <td><div class="skeleton" style="height:14px;width:110px;">a</div></td>
+      <td><div class="skeleton" style="height:14px;width:70px;">a</div></td>
       <td><div class="skeleton" style="height:14px;width:90px;">a</div></td>
       <td><div class="skeleton" style="height:14px;width:60px;">a</div></td>
       <td><div class="skeleton" style="height:14px;width:40px;">a</div></td>
@@ -2550,7 +2895,7 @@ function renderSkeletonTable(containerEl) {
     </tr>`;
   containerEl.innerHTML = `
     <table class="data-table">
-      <thead><tr><th>Name</th><th>Host</th><th>Latency</th><th>Packet Loss</th><th>Last Check</th><th></th></tr></thead>
+      <thead><tr><th>Name</th><th>Group</th><th>Host</th><th>Latency</th><th>Packet Loss</th><th>Last Check</th><th></th></tr></thead>
       <tbody>${skeletonRow()}${skeletonRow()}${skeletonRow()}</tbody>
     </table>`;
 }
@@ -2661,6 +3006,8 @@ function openTargetModal(target) {
   qs("input-timeout").value = target?.timeout ?? 1;
   qs("input-interval").value = target?.interval ?? 10;
   
+  populateGroupSelect(target?.group_id);
+
   // Telegram Notification settings
   const tgEnabled = Boolean(target?.telegram_enabled);
   qs("input-telegram-enabled").checked = tgEnabled;
@@ -2776,9 +3123,12 @@ async function submitTargetForm(e) {
 
   if (hasError) return;
 
+  const groupId = Number(qs("input-target-group").value) || null;
+
   const payload = {
     name,
     host,
+    group_id: groupId,
     count: Number(qs("input-count").value) || 4,
     timeout: Number(qs("input-timeout").value) || 1,
     interval: Number(qs("input-interval").value) || 10,
@@ -2933,6 +3283,7 @@ async function openDetail(targetId) {
 
   qs("detail-name").textContent = "Loading\u2026";
   qs("detail-host").textContent = "";
+  if (qs("detail-group")) qs("detail-group").textContent = "Root";
   qs("detail-current-latency").textContent = "--";
   qs("detail-packet-loss").textContent = "--";
   qs("detail-min-avg-max").textContent = "--";
@@ -2944,6 +3295,7 @@ async function openDetail(targetId) {
 
     qs("detail-name").textContent = target.name;
     qs("detail-host").textContent = target.host;
+    if (qs("detail-group")) qs("detail-group").textContent = target.group_name || "Root";
     document.getElementById("detail-status-badge").outerHTML = statusBadgeWithId(liveState.status);
     qs("detail-current-latency").textContent = fmtLatency(liveState.latency_avg);
     qs("detail-packet-loss").textContent = fmtLoss(liveState.packet_loss);
@@ -3299,6 +3651,18 @@ function bindEvents() {
   const formUser = qs("form-user");
   if (formUser) formUser.addEventListener("submit", submitUserForm);
 
+  const btnAddGroup = qs("btn-add-group");
+  if (btnAddGroup) btnAddGroup.addEventListener("click", () => openGroupModal(null));
+
+  const modalGroupClose = qs("modal-group-close");
+  if (modalGroupClose) modalGroupClose.addEventListener("click", closeGroupModal);
+
+  const modalGroupCancel = qs("modal-group-cancel");
+  if (modalGroupCancel) modalGroupCancel.addEventListener("click", closeGroupModal);
+
+  const formGroup = qs("form-group");
+  if (formGroup) formGroup.addEventListener("submit", submitGroupForm);
+
   const btnCreateBackup = qs("btn-create-backup");
   if (btnCreateBackup) btnCreateBackup.addEventListener("click", createBackupNow);
 
@@ -3365,7 +3729,7 @@ function bindEvents() {
     });
   });
 
-  [qs("modal-target"), qs("modal-confirm"), qs("modal-user"), qs("modal-change-password")].forEach((overlay) => {
+  [qs("modal-target"), qs("modal-confirm"), qs("modal-user"), qs("modal-group"), qs("modal-change-password")].forEach((overlay) => {
     if (overlay) {
       overlay.addEventListener("click", (e) => {
         if (overlay.id === "modal-change-password" && isForceChangePassword) return;
@@ -3378,7 +3742,7 @@ function bindEvents() {
   document.addEventListener("keydown", (e) => {
     if (e.key === "Escape") {
       if (isForceChangePassword) return;
-      [qs("modal-target"), qs("modal-confirm"), qs("modal-user"), qs("modal-change-password")].forEach((overlay) => {
+      [qs("modal-target"), qs("modal-confirm"), qs("modal-user"), qs("modal-group"), qs("modal-change-password")].forEach((overlay) => {
         if (overlay && !overlay.classList.contains("hidden")) {
           overlay.classList.add("hidden");
         }
@@ -3506,6 +3870,7 @@ async function init() {
   if (window.lucide) lucide.createIcons();
 
   await initAuth();
+  initIdleAutoLogout();
   await fetchDashboard({ showSkeleton: true });
   await checkHealth();
   setupAutoRefresh();

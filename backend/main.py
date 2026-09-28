@@ -23,6 +23,7 @@ from fastapi.staticfiles import StaticFiles
 import db
 from api.routes_monitor import router as monitor_router
 from api.routes_targets import router as targets_router
+from api.routes_groups import router as groups_router
 from api.routes_auth import router as auth_router
 from api.routes_users import router as users_router
 from api.routes_database import router as database_router
@@ -98,6 +99,7 @@ app.include_router(users_router)
 app.include_router(database_router)
 app.include_router(monitor_router)
 app.include_router(targets_router)
+app.include_router(groups_router)
 
 # Serve the static frontend last so it doesn't shadow the /api routes.
 if FRONTEND_DIR.exists():

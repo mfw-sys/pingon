@@ -81,7 +81,9 @@ async def create_target(payload: TargetCreate, current_user: Annotated[dict, Dep
         payload.telegram_notify_up,
         payload.telegram_custom,
         payload.telegram_template_down,
-        payload.telegram_template_up
+        payload.telegram_template_up,
+        payload.group_id,
+        payload.group_name
     )
     await monitor_service.on_target_created(target)
     return _mask_token(target)

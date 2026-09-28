@@ -53,6 +53,43 @@ class PingResponse(BaseModel):
     status_changed: Optional[bool] = None
 
 
+# --- Groups ----------------------------------------------------------------
+
+class GroupCreate(BaseModel):
+    name: str = Field(..., min_length=1, max_length=100)
+    description: Optional[str] = Field(None, max_length=500)
+
+    @field_validator("name")
+    @classmethod
+    def strip_name(cls, v: str) -> str:
+        v = v.strip()
+        if not v:
+            raise ValueError("Group name cannot be empty")
+        return v
+
+
+class GroupUpdate(BaseModel):
+    name: Optional[str] = Field(None, min_length=1, max_length=100)
+    description: Optional[str] = Field(None, max_length=500)
+
+    @field_validator("name")
+    @classmethod
+    def strip_name(cls, v: Optional[str]) -> Optional[str]:
+        if v is not None:
+            v = v.strip()
+            if not v:
+                raise ValueError("Group name cannot be empty")
+        return v
+
+
+class GroupOut(BaseModel):
+    id: int
+    name: str
+    description: Optional[str] = None
+    target_count: int = 0
+    created_at: str
+
+
 # --- Targets ---------------------------------------------------------------
 
 class TargetCreate(BaseModel):
@@ -63,6 +100,9 @@ class TargetCreate(BaseModel):
     timeout: float = Field(1.0, gt=0, le=10)
     enabled: bool = True
     
+    group_id: Optional[int] = None
+    group_name: Optional[str] = None
+
     telegram_enabled: bool = False
     telegram_name: Optional[str] = None
     telegram_token: Optional[str] = None
@@ -87,6 +127,9 @@ class TargetUpdate(BaseModel):
     timeout: Optional[float] = Field(None, gt=0, le=10)
     enabled: Optional[bool] = None
     
+    group_id: Optional[int] = None
+    group_name: Optional[str] = None
+
     telegram_enabled: Optional[bool] = None
     telegram_name: Optional[str] = None
     telegram_token: Optional[str] = None
@@ -106,6 +149,8 @@ class TargetOut(BaseModel):
     count: int
     timeout: float
     enabled: bool
+    group_id: Optional[int] = None
+    group_name: Optional[str] = "Root"
     telegram_enabled: bool
     telegram_name: Optional[str]
     telegram_token: Optional[str]

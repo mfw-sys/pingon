@@ -674,4 +674,104 @@ def test_upload_and_restore_backup(client, tmp_path, monkeypatch):
     assert targets_restored[0]["name"] == "Target Alpha"
 
 
+def test_default_root_group_exists(client):
+    res = client.get("/api/groups")
+    assert res.status_code == 200
+    groups = res.json()
+    assert len(groups) >= 1
+    root = next((g for g in groups if g["name"].lower() == "root"), None)
+    assert root is not None
+    assert root["name"] == "Root"
+
+
+def test_create_target_defaults_to_root_group(client):
+    res = client.post(
+        "/api/targets",
+        json={"name": "NoGroupTarget", "host": "127.0.0.1", "interval": 10, "count": 2, "timeout": 1, "enabled": True}
+    )
+    assert res.status_code == 201
+    target = res.json()
+    assert target["group_name"] == "Root"
+    assert target["group_id"] is not None
+
+    # Verify via get
+    res_get = client.get(f"/api/targets/{target['id']}")
+    assert res_get.status_code == 200
+    assert res_get.json()["group_name"] == "Root"
+
+
+def test_groups_crud_and_target_integration(client):
+    # 1. Create a new group
+    res_g = client.post("/api/groups", json={"name": "Servers", "description": "Production Servers"})
+    assert res_g.status_code == 201
+    group = res_g.json()
+    assert group["name"] == "Servers"
+    assert group["description"] == "Production Servers"
+    gid = group["id"]
+
+    # 2. Duplicate group name rejected
+    res_dup = client.post("/api/groups", json={"name": "servers"})
+    assert res_dup.status_code == 409
+
+    # 3. Create target with this group_id
+    res_t1 = client.post(
+        "/api/targets",
+        json={"name": "Web01", "host": "127.0.0.1", "interval": 10, "count": 2, "timeout": 1, "enabled": True, "group_id": gid}
+    )
+    assert res_t1.status_code == 201
+    t1 = res_t1.json()
+    assert t1["group_name"] == "Servers"
+    assert t1["group_id"] == gid
+
+    # 4. Create target with group_name
+    res_t2 = client.post(
+        "/api/targets",
+        json={"name": "Web02", "host": "127.0.0.1", "interval": 10, "count": 2, "timeout": 1, "enabled": True, "group_name": "Routers"}
+    )
+    assert res_t2.status_code == 201
+    t2 = res_t2.json()
+    assert t2["group_name"] == "Routers"
+
+    # 5. Check target counts in list_groups
+    groups_list = client.get("/api/groups").json()
+    servers_g = next((g for g in groups_list if g["name"] == "Servers"), None)
+    assert servers_g is not None
+    assert servers_g["target_count"] == 1
+
+    routers_g = next((g for g in groups_list if g["name"] == "Routers"), None)
+    assert routers_g is not None
+    assert routers_g["target_count"] == 1
+
+    # 6. Update target to different group
+    res_update_t = client.put(f"/api/targets/{t1['id']}", json={"group_id": routers_g["id"]})
+    assert res_update_t.status_code == 200
+    assert res_update_t.json()["group_name"] == "Routers"
+    assert res_update_t.json()["group_id"] == routers_g["id"]
+
+    # 7. Update group details
+    res_update_g = client.put(f"/api/groups/{gid}", json={"name": "Servers-Renamed", "description": "Updated desc"})
+    assert res_update_g.status_code == 200
+    assert res_update_g.json()["name"] == "Servers-Renamed"
+
+    # 8. Delete group reassigns targets to Root
+    res_del_routers = client.delete(f"/api/groups/{routers_g['id']}")
+    assert res_del_routers.status_code == 204
+
+    # Target t1 and t2 should now belong to Root
+    t1_after = client.get(f"/api/targets/{t1['id']}").json()
+    assert t1_after["group_name"] == "Root"
+    t2_after = client.get(f"/api/targets/{t2['id']}").json()
+    assert t2_after["group_name"] == "Root"
+
+    # 9. Cannot delete Root group
+    root_g = next(g for g in client.get("/api/groups").json() if g["name"].lower() == "root")
+    res_del_root = client.delete(f"/api/groups/{root_g['id']}")
+    assert res_del_root.status_code == 400
+
+    # 10. Cannot rename Root group
+    res_ren_root = client.put(f"/api/groups/{root_g['id']}", json={"name": "OtherName"})
+    assert res_ren_root.status_code == 400
+
+
+
 

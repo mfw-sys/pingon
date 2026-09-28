@@ -255,9 +255,20 @@
   async function boot() {
     const urlParams = new URLSearchParams(window.location.search);
     const isLogout = urlParams.get("from") === "logout" || sessionStorage.getItem("just_logged_out") === "1";
+    const isIdleLogout = urlParams.get("from") === "idle" || sessionStorage.getItem("idle_logout") === "1";
     sessionStorage.removeItem("just_logged_out");
+    sessionStorage.removeItem("idle_logout");
+    sessionStorage.removeItem("pingon_last_activity");
 
-    if (isLogout) {
+    if (isIdleLogout) {
+      addLine(promptHTML("session expired"));
+      await sleep(350);
+
+      const elIdle = addLine(`<span class="c-dim">Auto-logout<span class="spinner"></span></span>`);
+      await sleep(500);
+      elIdle.innerHTML = `<span class="c-yellow">⏳</span> <span class="c-dim">Sesi berakhir karena tidak ada aktivitas selama 1 jam</span>`;
+      await sleep(250);
+    } else if (isLogout) {
       addLine(promptHTML("logout"));
       await sleep(350);
 
