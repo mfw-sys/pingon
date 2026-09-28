@@ -1,0 +1,40 @@
+# ──────────────────────────────────────────────────────────────
+#  PingOn – docker compose up -d
+# ──────────────────────────────────────────────────────────────
+#
+#  Cara pakai:
+#    docker compose up -d          → jalankan
+#    docker compose logs -f        → lihat log
+#    docker compose down           → stop
+#    docker compose up -d --build  → rebuild setelah update
+#
+#  Data persisten di Docker volume "pingon-data".
+#  Akses dashboard: http://localhost:8000
+#  Login default:   admin / admin123 (wajib ganti saat login pertama)
+# ──────────────────────────────────────────────────────────────
+
+services:
+  pingon:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: pingon
+    restart: unless-stopped
+    ports:
+      - "${PINGON_PORT:-8000}:8000"
+    volumes:
+      # Persistent storage: database, backups, and auto-generated JWT secret
+      - pingon-data:/app/backend/data
+    environment:
+      - JWT_ACCESS_TOKEN_EXPIRE_MINUTES=${JWT_ACCESS_TOKEN_EXPIRE_MINUTES:-60}
+      - BACKUP_INTERVAL_HOURS=${BACKUP_INTERVAL_HOURS:-24}
+      - BACKUP_KEEP_COUNT=${BACKUP_KEEP_COUNT:-14}
+      - BACKUP_ENABLED=${BACKUP_ENABLED:-true}
+      - TZ=${TZ:-Asia/Jakarta}
+    cap_add:
+      # Required for unprivileged ICMP ping inside the container
+      - NET_RAW
+
+volumes:
+  pingon-data:
+    driver: local

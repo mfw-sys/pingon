@@ -1,0 +1,3518 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<meta name="description" content="PingOn — Keep Your Network On. Real-time network ping &amp; availability monitoring dashboard." />
+<title>PingOn</title>
+
+<script>
+  // Sets the theme before first paint (reading saved preference, or
+  // falling back to the OS preference) so there's no flash of the
+  // wrong theme while the rest of the page loads. Kept separate from
+  // the main app script further down, which just wires up the toggle
+  // button afterward.
+  (function () {
+    try {
+      var stored = localStorage.getItem("pingon_theme");
+      var theme =
+        stored === "light" || stored === "dark"
+          ? stored
+          : window.matchMedia && window.matchMedia("(prefers-color-scheme: light)").matches
+          ? "light"
+          : "dark";
+      document.documentElement.setAttribute("data-theme", theme);
+    } catch (e) {
+      /* localStorage unavailable (e.g. private mode) — default dark stays. */
+    }
+  })();
+</script>
+
+<link rel="preconnect" href="https://fonts.googleapis.com" />
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+<link
+  href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&family=Ubuntu:wght@400;500;700&display=swap"
+  rel="stylesheet"
+/>
+
+<script src="https://cdn.tailwindcss.com"></script>
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/uplot@1.6.31/dist/uPlot.min.css" />
+<script src="https://cdn.jsdelivr.net/npm/uplot@1.6.31/dist/uPlot.iife.min.js"></script>
+<script src="https://unpkg.com/lucide@latest"></script>
+
+<style>
+/* ============================================================
+   Design tokens
+   Palette per brief: navy primary, red = critical/down,
+   maroon = warning/degraded, dark = text/borders on light UI.
+   Background/glass/status-green/neutral are derived choices needed
+   to make the palette work on a real dashboard, not in the brief.
+   ============================================================ */
+:root {
+  /* Brief palette */
+  --navy: #000080;
+  --navy-soft: #2a2ea8;
+  --red: #ff0000;
+  --maroon: #9e2a3a;
+  --dark: #3a2525;
+
+  /* Derived */
+  --bg-base: #0a0b14;
+  --bg-glow-navy: rgba(0, 0, 128, 0.35);
+  --bg-glow-maroon: rgba(158, 42, 58, 0.22);
+
+  --glass-surface: rgba(255, 255, 255, 0.045);
+  --glass-surface-hover: rgba(255, 255, 255, 0.07);
+  --glass-border: rgba(255, 255, 255, 0.09);
+  --glass-shadow: 0 8px 32px rgba(0, 0, 0, 0.45);
+
+  --sidebar-bg: rgba(0, 0, 128, 0.16);
+
+  --text-primary: #f2f3f8;
+  --text-secondary: #a7acc4;
+  --text-muted: #6d7290;
+
+  --green: #22c55e;
+  --neutral: #6b7280;
+
+  /* Theme-dependent surface tokens (solid panels, inputs, popups) —
+     kept as variables specifically so [data-theme="light"] below can
+     override them; everything else in this file already reads from
+     the tokens above, so this is the full set that needs a light
+     counterpart. */
+  --solid-panel-bg: #12131f;
+  --input-bg: rgba(255, 255, 255, 0.04);
+  --skeleton-bg: rgba(255, 255, 255, 0.06);
+  --scrollbar-thumb: rgba(255, 255, 255, 0.12);
+  --chart-axis-stroke: #a7acc4;
+  --chart-grid-stroke: rgba(255, 255, 255, 0.06);
+
+  --radius-md: 12px;
+  --radius-lg: 16px;
+  --radius-sm: 8px;
+
+  --font-sans: "IBM Plex Sans", -apple-system, sans-serif;
+  --font-mono: "IBM Plex Mono", ui-monospace, monospace;
+  --font-brand: "Ubuntu", "IBM Plex Sans", sans-serif;
+}
+
+/* ============================================================
+   Light mode
+   Toggled via a `data-theme="light"` attribute on <html> (see the
+   tiny inline script at the top of <head> that sets it before first
+   paint, and initTheme()/applyTheme() further down in the app script
+   that wire up the toggle button). Dark mode is the default and needs
+   no override block — it's just the :root values above.
+   ============================================================ */
+:root[data-theme="light"] {
+  --bg-base: #f3f4f9;
+  --bg-glow-navy: rgba(0, 0, 128, 0.07);
+  --bg-glow-maroon: rgba(158, 42, 58, 0.05);
+
+  --glass-surface: rgba(255, 255, 255, 0.72);
+  --glass-surface-hover: rgba(255, 255, 255, 0.92);
+  --glass-border: rgba(30, 32, 60, 0.1);
+  --glass-shadow: 0 8px 28px rgba(30, 32, 60, 0.1);
+
+  --sidebar-bg: rgba(255, 255, 255, 0.6);
+
+  --text-primary: #1a1c26;
+  --text-secondary: #4b4f66;
+  --text-muted: #767a92;
+
+  --solid-panel-bg: #ffffff;
+  --input-bg: rgba(20, 20, 40, 0.035);
+  --skeleton-bg: rgba(20, 20, 40, 0.07);
+  --scrollbar-thumb: rgba(20, 20, 40, 0.16);
+  --chart-axis-stroke: #5a5e78;
+  --chart-grid-stroke: rgba(20, 20, 40, 0.08);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  font-family: var(--font-sans);
+  font-weight: 400;
+  color: var(--text-primary);
+  background: var(--bg-base);
+  background-image:
+    radial-gradient(circle at 8% 8%, var(--bg-glow-navy), transparent 42%),
+    radial-gradient(circle at 92% 85%, var(--bg-glow-maroon), transparent 45%);
+  background-attachment: fixed;
+  min-height: 100vh;
+  -webkit-font-smoothing: antialiased;
+}
+
+::selection {
+  background: rgba(0, 0, 128, 0.5);
+}
+
+/* Scrollbar (subtle, not decorative) */
+::-webkit-scrollbar {
+  width: 10px;
+  height: 10px;
+}
+::-webkit-scrollbar-thumb {
+  background: var(--scrollbar-thumb);
+  border-radius: 8px;
+}
+::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* ============================================================
+   Typography scale
+   ============================================================ */
+h1,
+h2,
+h3,
+h4 {
+  font-weight: 600;
+  margin: 0;
+  letter-spacing: -0.01em;
+}
+
+.label {
+  font-weight: 500;
+  font-size: 0.8125rem;
+  color: var(--text-secondary);
+}
+
+.brand-tagline {
+  font-family: var(--font-sans);
+  font-size: 0.65rem;
+  font-weight: 500;
+  letter-spacing: 0.04em;
+  color: var(--text-muted);
+  margin-left: 2px;
+}
+
+.metric,
+.mono {
+  font-family: var(--font-mono);
+}
+
+.metric-lg {
+  font-family: var(--font-mono);
+  font-weight: 700;
+  font-size: 1.75rem;
+  line-height: 1.1;
+  color: var(--text-primary);
+}
+
+/* ============================================================
+   Glass surfaces
+   ============================================================ */
+.glass {
+  background: var(--glass-surface);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid var(--glass-border);
+  box-shadow: var(--glass-shadow);
+  border-radius: var(--radius-lg);
+}
+
+.glass-panel {
+  background: rgba(255, 255, 255, 0.03);
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
+  border: 1px solid var(--glass-border);
+}
+
+.sidebar {
+  background: var(--sidebar-bg);
+  backdrop-filter: blur(24px);
+  -webkit-backdrop-filter: blur(24px);
+  border-right: 1px solid var(--glass-border);
+  transition: width 0.18s ease;
+}
+
+/* Collapsed sidebar (desktop only — mobile keeps its own overlay
+   toggle untouched). Two-class selector so it reliably beats
+   Tailwind's single-class .w-60 regardless of CDN injection order
+   (same specificity principle as the earlier .modal-overlay.hidden fix). */
+@media (min-width: 768px) {
+  .sidebar.collapsed {
+    width: 76px !important;
+  }
+  .sidebar.collapsed #sidebar-brand,
+  .sidebar.collapsed .sidebar-text-hide {
+    display: none;
+  }
+  .sidebar.collapsed #sidebar-brand-row {
+    justify-content: center;
+    padding-left: 0;
+    padding-right: 0;
+  }
+  .sidebar.collapsed .nav-item {
+    justify-content: center;
+    padding-left: 10px;
+    padding-right: 10px;
+  }
+  .sidebar.collapsed .nav-item span {
+    display: none;
+  }
+}
+
+.card {
+  background: var(--glass-surface);
+  backdrop-filter: blur(20px);
+  -webkit-backdrop-filter: blur(20px);
+  border: 1px solid var(--glass-border);
+  box-shadow: var(--glass-shadow);
+  border-radius: var(--radius-lg);
+  padding: 20px 22px;
+}
+
+/* ============================================================
+   Nav
+   ============================================================ */
+.nav-item {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 10px 14px;
+  border-radius: var(--radius-sm);
+  color: var(--text-secondary);
+  font-size: 0.9rem;
+  font-weight: 500;
+  cursor: pointer;
+  transition: background-color 0.15s ease, color 0.15s ease;
+  border: 1px solid transparent;
+}
+.nav-item:hover {
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--text-primary);
+}
+.nav-item.active {
+  background: rgba(76, 90, 220, 0.22);
+  border-color: rgba(76, 90, 220, 0.35);
+  color: #c7cdff;
+}
+:root[data-theme="light"] .nav-item:hover {
+  background: rgba(20, 20, 40, 0.05);
+}
+:root[data-theme="light"] .nav-item.active {
+  background: rgba(76, 90, 220, 0.12);
+  border-color: rgba(76, 90, 220, 0.3);
+  color: #2f3ea8;
+}
+.nav-item svg {
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+}
+
+/* ============================================================
+   Buttons
+   ============================================================ */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  height: 38px;
+  padding: 0 16px;
+  border-radius: var(--radius-sm);
+  font-family: var(--font-sans);
+  font-weight: 500;
+  font-size: 0.875rem;
+  border: 1px solid transparent;
+  cursor: pointer;
+  transition: filter 0.15s ease, background-color 0.15s ease, opacity 0.15s ease;
+  white-space: nowrap;
+}
+.btn:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+.btn svg {
+  width: 16px;
+  height: 16px;
+}
+
+.btn-primary {
+  background: var(--navy);
+  color: #ffffff;
+}
+.btn-primary:hover:not(:disabled) {
+  filter: brightness(1.18);
+}
+
+.btn-ghost {
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--text-primary);
+  border-color: var(--glass-border);
+}
+.btn-ghost:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.09);
+}
+
+.btn-danger {
+  background: var(--red);
+  color: #fff;
+}
+.btn-danger:hover:not(:disabled) {
+  filter: brightness(1.12);
+}
+
+.btn-warning {
+  background: var(--maroon);
+  color: #fff;
+}
+.btn-warning:hover:not(:disabled) {
+  filter: brightness(1.15);
+}
+
+.btn-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 34px;
+  height: 34px;
+  padding: 0;
+  line-height: 1;
+  border-radius: var(--radius-sm);
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--text-secondary);
+  border: 1px solid var(--glass-border);
+  flex-shrink: 0;
+}
+.btn-icon:hover:not(:disabled) {
+  background: rgba(255, 255, 255, 0.1);
+  color: var(--text-primary);
+}
+.btn-icon svg {
+  width: 16px;
+  height: 16px;
+  display: block;
+}
+
+/* ============================================================
+   Status badges
+   ============================================================ */
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 10px;
+  border-radius: 999px;
+  font-size: 0.75rem;
+  font-weight: 500;
+  font-family: var(--font-sans);
+  border: 1px solid transparent;
+}
+.badge-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.badge-up {
+  background: rgba(34, 197, 94, 0.14);
+  color: #4ade80;
+  border-color: rgba(34, 197, 94, 0.28);
+}
+.badge-up .badge-dot {
+  background: var(--green);
+  box-shadow: 0 0 6px rgba(34, 197, 94, 0.7);
+}
+
+.badge-degraded {
+  background: rgba(158, 42, 58, 0.18);
+  color: #e8879a;
+  border-color: rgba(158, 42, 58, 0.4);
+}
+.badge-degraded .badge-dot {
+  background: var(--maroon);
+  box-shadow: 0 0 6px rgba(158, 42, 58, 0.7);
+}
+
+.badge-down {
+  background: rgba(255, 0, 0, 0.14);
+  color: #ff6b6b;
+  border-color: rgba(255, 0, 0, 0.3);
+}
+.badge-down .badge-dot {
+  background: var(--red);
+  box-shadow: 0 0 6px rgba(255, 0, 0, 0.7);
+}
+
+.badge-unknown {
+  background: rgba(107, 114, 128, 0.16);
+  color: var(--text-secondary);
+  border-color: rgba(107, 114, 128, 0.3);
+}
+.badge-unknown .badge-dot {
+  background: var(--neutral);
+}
+
+.badge-paused {
+  background: rgba(58, 37, 37, 0.35);
+  color: #c9a9a9;
+  border-color: rgba(158, 42, 58, 0.3);
+}
+.badge-paused .badge-dot {
+  background: #a78b8b;
+}
+
+/* Light mode: the badge fills above were tuned for a dark backdrop —
+   their pastel text colors read fine there but are too washed-out on
+   a light card, so darker/more saturated text colors are swapped in
+   here without touching the dark-mode rules. */
+:root[data-theme="light"] .badge-up {
+  background: rgba(22, 163, 74, 0.12);
+  color: #15803d;
+  border-color: rgba(22, 163, 74, 0.3);
+}
+:root[data-theme="light"] .badge-degraded {
+  background: rgba(158, 42, 58, 0.1);
+  color: var(--maroon);
+  border-color: rgba(158, 42, 58, 0.3);
+}
+:root[data-theme="light"] .badge-down {
+  background: rgba(220, 38, 38, 0.1);
+  color: #dc2626;
+  border-color: rgba(220, 38, 38, 0.3);
+}
+:root[data-theme="light"] .badge-paused {
+  background: rgba(158, 42, 58, 0.08);
+  color: #7a3040;
+  border-color: rgba(158, 42, 58, 0.25);
+}
+
+.badge svg {
+  width: 12px;
+  height: 12px;
+  flex-shrink: 0;
+}
+
+/* ============================================================
+   System status pill
+   ============================================================ */
+.system-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 0.8125rem;
+  color: var(--text-secondary);
+  font-weight: 500;
+}
+.system-status .dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--green);
+  box-shadow: 0 0 8px rgba(34, 197, 94, 0.8);
+}
+.system-status.offline .dot {
+  background: var(--red);
+  box-shadow: 0 0 8px rgba(255, 0, 0, 0.8);
+}
+.system-status.offline {
+  color: #ff9b9b;
+}
+:root[data-theme="light"] .system-status.offline {
+  color: #c81e1e;
+}
+
+/* ============================================================
+   Table
+   ============================================================ */
+.table-wrap {
+  overflow-x: auto;
+  border-radius: var(--radius-md);
+}
+table.data-table {
+  width: 100%;
+  border-collapse: collapse;
+  min-width: 720px;
+}
+.data-table thead th {
+  text-align: left;
+  font-size: 0.75rem;
+  font-weight: 500;
+  color: var(--text-muted);
+  padding: 10px 16px;
+  border-bottom: 1px solid var(--glass-border);
+  white-space: nowrap;
+}
+.data-table tbody td {
+  padding: 14px 16px;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.05);
+  font-size: 0.875rem;
+  vertical-align: middle;
+}
+.data-table tbody tr {
+  transition: background-color 0.12s ease;
+  cursor: pointer;
+}
+.data-table tbody tr:hover {
+  background: rgba(255, 255, 255, 0.03);
+}
+.data-table tbody tr:last-child td {
+  border-bottom: none;
+}
+.row-name {
+  font-weight: 500;
+  color: var(--text-primary);
+}
+.row-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  justify-content: flex-end;
+}
+
+/* ============================================================
+   Collapsible monitoring groups (status-grouped target table)
+   Animation is intentionally short (150-180ms) and limited to
+   max-height/opacity — subtle per the collapsible spec, no bounce
+   or scale effects.
+   ============================================================ */
+.target-group + .target-group {
+  border-top: 1px solid var(--glass-border);
+}
+.target-group-header {
+  width: 100%;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px 18px;
+  background: transparent;
+  border: none;
+  cursor: pointer;
+  font-family: var(--font-sans);
+  text-align: left;
+  color: var(--text-primary);
+}
+.target-group-header:hover {
+  background: rgba(255, 255, 255, 0.03);
+}
+.group-chevron {
+  width: 16px;
+  height: 16px;
+  color: var(--text-muted);
+  flex-shrink: 0;
+}
+.group-count {
+  margin-left: auto;
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  color: var(--text-muted);
+}
+.target-group-body {
+  max-height: 4000px;
+  opacity: 1;
+  overflow: hidden;
+  transition: max-height 0.18s ease, opacity 0.15s ease;
+}
+.target-group.collapsed .target-group-body {
+  max-height: 0;
+  opacity: 0;
+}
+
+/* Generic collapsible section (chart cards, modal "Advanced" group) */
+.collapsible-header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  user-select: none;
+}
+.collapsible-header .group-chevron {
+  color: var(--text-secondary);
+}
+.collapsible-body {
+  max-height: 2000px;
+  opacity: 1;
+  overflow: hidden;
+  transition: max-height 0.18s ease, opacity 0.15s ease;
+}
+.collapsible.collapsed .collapsible-body {
+  max-height: 0;
+  opacity: 0;
+}
+
+/* ============================================================
+   Heartbeat (Uptime-Kuma-style availability timeline)
+   ============================================================ */
+.heartbeat-current {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.8125rem;
+  font-weight: 500;
+  color: var(--text-secondary);
+}
+.heartbeat-current-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--neutral);
+  flex-shrink: 0;
+}
+.heartbeat-current.is-up .heartbeat-current-dot {
+  background: var(--green);
+  box-shadow: 0 0 6px rgba(34, 197, 94, 0.7);
+}
+.heartbeat-current.is-down .heartbeat-current-dot {
+  background: var(--red);
+  box-shadow: 0 0 6px rgba(255, 0, 0, 0.7);
+}
+.heartbeat-current.is-degraded .heartbeat-current-dot {
+  background: var(--maroon);
+  box-shadow: 0 0 6px rgba(158, 42, 58, 0.7);
+}
+.heartbeat-current.is-paused .heartbeat-current-dot {
+  background: var(--neutral);
+}
+
+.heartbeat-summary {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 14px;
+  margin-top: 14px;
+}
+@media (min-width: 640px) {
+  .heartbeat-summary {
+    grid-template-columns: repeat(4, 1fr);
+  }
+}
+
+.heartbeat-bar-wrap {
+  width: 100%;
+  overflow-x: auto;
+  scroll-behavior: smooth;
+  padding-bottom: 8px; /* For scrollbar */
+}
+/* Hide scrollbar for a cleaner look while keeping it scrollable */
+.heartbeat-bar-wrap::-webkit-scrollbar {
+  height: 6px;
+}
+.heartbeat-bar-wrap::-webkit-scrollbar-thumb {
+  background: var(--scrollbar-thumb);
+  border-radius: 4px;
+}
+
+.heartbeat-bar {
+  display: flex;
+  align-items: center;
+  gap: 4px; /* 4-6px gap */
+  width: max-content;
+  min-width: 100%;
+}
+.heartbeat-segment {
+  flex-shrink: 0;
+  width: 6px; /* 5-7px width */
+  height: 24px; /* 20-24px height */
+  border-radius: 9999px; /* rounded bar */
+  cursor: pointer;
+  transition: transform 0.1s ease, filter 0.1s ease;
+}
+.heartbeat-segment:hover {
+  transform: scaleY(1.2);
+  filter: brightness(1.25);
+}
+.heartbeat-segment.kind-up {
+  background: var(--green);
+}
+.heartbeat-segment.kind-down {
+  background: var(--red);
+}
+.heartbeat-segment.kind-degraded {
+  background: var(--maroon);
+}
+.heartbeat-segment.kind-paused {
+  background: var(--neutral);
+  opacity: 0.5;
+}
+.heartbeat-segment.kind-nodata {
+  background: transparent;
+  cursor: default;
+}
+.heartbeat-segment.kind-nodata:hover {
+  filter: none;
+  transform: none;
+}
+
+.heartbeat-range-labels {
+  display: flex;
+  justify-content: space-between;
+  margin-top: 6px;
+  font-family: var(--font-mono);
+  font-size: 0.7rem;
+  color: var(--text-muted);
+}
+.heartbeat-range-labels span:nth-child(2) {
+  font-family: var(--font-sans);
+}
+
+.heartbeat-tooltip {
+  position: fixed;
+  z-index: 100;
+  background: var(--solid-panel-bg);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-sm);
+  padding: 10px 12px;
+  box-shadow: 0 16px 34px rgba(0, 0, 0, 0.45);
+  min-width: 190px;
+  pointer-events: none;
+}
+.heartbeat-tooltip.hidden {
+  display: none;
+}
+.heartbeat-tooltip-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 18px;
+  padding: 2px 0;
+}
+.heartbeat-tooltip-label {
+  font-family: var(--font-sans);
+  font-size: 0.75rem;
+  font-weight: 500;
+  color: var(--text-secondary);
+}
+.heartbeat-tooltip-row span:last-child {
+  font-family: var(--font-mono);
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: var(--text-primary);
+}
+
+/* ============================================================
+   Skeleton loading
+   ============================================================ */
+.skeleton {
+  position: relative;
+  overflow: hidden;
+  background: var(--skeleton-bg);
+  border-radius: 6px;
+  color: transparent !important;
+}
+.skeleton::after {
+  content: "";
+  position: absolute;
+  inset: 0;
+  transform: translateX(-100%);
+  background: linear-gradient(90deg, transparent, rgba(255, 255, 255, 0.08), transparent);
+  animation: shimmer 1.4s infinite;
+}
+@keyframes shimmer {
+  100% {
+    transform: translateX(100%);
+  }
+}
+
+/* ============================================================
+   Modal
+   ============================================================ */
+.modal-overlay {
+  position: fixed;
+  inset: 0;
+  background: rgba(4, 5, 12, 0.65);
+  backdrop-filter: blur(4px);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 60;
+  padding: 20px;
+}
+/* Higher specificity than Tailwind's .hidden{display:none} (which can be
+   injected into <head> before this block, and would otherwise lose to
+   .modal-overlay's own display:flex at equal specificity + later source
+   order) — this is what was causing modals to render open by default. */
+.modal-overlay.hidden {
+  display: none;
+}
+.modal-box {
+  width: 100%;
+  max-width: 600px;
+  max-height: calc(100vh - 48px);
+  overflow-y: auto;
+  background: var(--solid-panel-bg);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-lg);
+  box-shadow: 0 24px 60px rgba(0, 0, 0, 0.55);
+  padding: 24px;
+}
+
+.field {
+  margin-bottom: 14px;
+}
+.field label {
+  display: block;
+  font-size: 0.8125rem;
+  font-weight: 500;
+  color: var(--text-secondary);
+  margin-bottom: 6px;
+}
+.field input:not([type="checkbox"]),
+.field textarea {
+  width: 100%;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--glass-border);
+  background: var(--input-bg);
+  color: var(--text-primary);
+  font-family: var(--font-sans);
+  font-size: 0.9rem;
+  outline: none;
+  transition: border-color 0.15s ease;
+}
+.field input:not([type="checkbox"]) {
+  height: 40px;
+  padding: 0 12px;
+}
+.field textarea {
+  min-height: 120px;
+  resize: vertical;
+  padding: 12px 14px;
+}
+.field input:not([type="checkbox"]):focus,
+.field textarea:focus {
+  border-color: var(--navy-soft);
+}
+
+/* Auto-refresh <select>: native option-list popups can't be fully
+   re-themed, but we can restyle the closed trigger (custom chevron,
+   no default browser arrow) and — supported by Chrome/Edge/Firefox —
+   the background/color of the open <option> list, so it no longer
+   renders as a plain white browser popup against the dark UI. */
+#refresh-select {
+  appearance: none;
+  -webkit-appearance: none;
+  background-color: var(--input-bg);
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'><path d='M1 1l4 4 4-4' fill='none' stroke='%23a7acc4' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/></svg>");
+  background-repeat: no-repeat;
+  background-position: right 10px center;
+  padding-right: 26px !important;
+  color: var(--text-primary);
+  border: 1px solid var(--glass-border);
+}
+:root[data-theme="light"] #refresh-select {
+  /* Same chevron, darker stroke so it stays visible against the light
+     trigger background (data-URIs can't read CSS variables). */
+  background-image: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='10' height='6' viewBox='0 0 10 6'><path d='M1 1l4 4 4-4' fill='none' stroke='%234b4f66' stroke-width='1.5' stroke-linecap='round' stroke-linejoin='round'/></svg>");
+}
+#refresh-select:focus {
+  outline: none;
+  border-color: var(--navy-soft);
+}
+#refresh-select option {
+  background-color: var(--solid-panel-bg);
+  color: var(--text-primary);
+}
+#refresh-select option:checked {
+  background-color: var(--navy);
+  color: #ffffff;
+}
+.field .error-text {
+  color: #ff8b8b;
+  font-size: 0.75rem;
+  margin-top: 4px;
+  display: none;
+}
+.field.has-error input:not([type="checkbox"]),
+.field.has-error textarea {
+  border-color: var(--red);
+}
+.field.has-error .error-text {
+  display: block;
+}
+
+/* Telegram 2-column grid → 1 column on narrow viewports */
+@media (max-width: 500px) {
+  #telegram-fields > div[style*="grid-template-columns"] {
+    grid-template-columns: 1fr !important;
+  }
+}
+
+/* Telegram: Notification Events checkboxes – small, inline, consistent */
+#telegram-fields input[type="checkbox"] {
+  width: 15px;
+  height: 15px;
+  min-width: 15px;
+  accent-color: var(--navy);
+  cursor: pointer;
+  margin: 0;
+  vertical-align: middle;
+  flex-shrink: 0;
+}
+#telegram-fields label[for^="input-telegram-notify"] {
+  font-size: 0.875rem;
+  color: var(--text-primary);
+  cursor: pointer;
+  margin-bottom: 0;
+  white-space: nowrap;
+}
+
+/* Confirm modal keeps its original narrow width */
+#modal-confirm .modal-box {
+  max-width: 380px;
+}
+/* ============================================================
+   Toasts
+   ============================================================ */
+#toast-container {
+  position: fixed;
+  bottom: 24px;
+  right: 24px;
+  z-index: 80;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  max-width: 340px;
+}
+@media (max-width: 767px) {
+  #toast-container {
+    left: 16px;
+    right: 16px;
+    bottom: 16px;
+    max-width: none;
+  }
+}
+.toast {
+  padding: 14px 16px;
+  border-radius: var(--radius-md);
+  background: var(--solid-panel-bg);
+  border: 1px solid var(--glass-border);
+  border-left: 3px solid var(--green);
+  box-shadow: 0 12px 30px rgba(0, 0, 0, 0.5);
+  animation: toast-in 0.2s ease;
+}
+.toast.down,
+.toast.error {
+  border-left-color: var(--red);
+}
+.toast.up,
+.toast.success {
+  border-left-color: var(--green);
+}
+.toast.info {
+  border-left-color: var(--navy-soft);
+}
+.toast-title {
+  font-weight: 600;
+  font-size: 0.875rem;
+  margin-bottom: 2px;
+}
+.toast-body {
+  font-size: 0.8125rem;
+  color: var(--text-secondary);
+}
+@keyframes toast-in {
+  from {
+    opacity: 0;
+    transform: translateX(20px);
+  }
+  to {
+    opacity: 1;
+    transform: translateX(0);
+  }
+}
+
+/* ============================================================
+   Misc
+   ============================================================ */
+.divider {
+  border: none;
+  border-top: 1px solid var(--glass-border);
+}
+
+.icon-btn-danger:hover:not(:disabled) {
+  color: #ff8b8b;
+  border-color: rgba(255, 0, 0, 0.35);
+}
+
+a {
+  color: inherit;
+}
+
+/* ============================================================
+   uPlot chart theming
+   The chart canvas itself (lines, axis ticks) is styled via uPlot's
+   JS `font`/`stroke` options in app.js — CSS cannot reach into
+   <canvas>. This block only covers the legend row below each chart
+   ("Time: … Latency (ms): …"), which uPlot renders as a real
+   <table class="u-legend">, so it IS reachable from CSS.
+   ============================================================ */
+.uplot {
+  font-family: var(--font-sans);
+}
+.u-legend {
+  font-family: var(--font-sans);
+  font-size: 0.8125rem;
+  font-weight: 500;
+  color: var(--text-secondary);
+  margin-top: 6px;
+}
+.u-legend th,
+.u-legend td {
+  font-family: inherit;
+  font-weight: inherit;
+  vertical-align: middle;
+  padding: 2px 6px;
+}
+.u-legend .u-marker {
+  vertical-align: middle;
+  margin-right: 4px;
+}
+.u-legend .u-value {
+  font-family: var(--font-mono);
+  font-weight: 600;
+  color: var(--text-primary);
+  min-width: 3ch;
+  display: inline-block;
+  text-align: left;
+}
+
+@media (max-width: 860px) {
+  .metric-lg {
+    font-size: 1.4rem;
+  }
+}
+
+</style>
+</head>
+<body>
+
+<div id="toast-container"></div>
+
+<div class="flex min-h-screen">
+
+  <!-- Sidebar -->
+  <aside id="sidebar" class="sidebar w-60 shrink-0 flex-col p-4 hidden md:flex fixed md:static inset-y-0 left-0 z-50">
+    <div class="flex items-center justify-between px-2 py-3 mb-4" id="sidebar-brand-row">
+      <div class="flex flex-col gap-1" id="sidebar-brand">
+        <div class="flex items-center" title="PingOn">
+          <svg width="108" height="25" viewBox="0 0 92 26" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="PingOn logo">
+            <!-- dot of the "i" becomes a ping/signal origin, connected by a
+                 single line toward "g" — the brand's network-path motif. -->
+            <path d="M17 5 L44 3" stroke="#4C6AFF" stroke-width="2" stroke-linecap="round" />
+            <circle cx="17" cy="5" r="2.6" fill="#4C6AFF" />
+            <circle cx="44" cy="3" r="1.6" fill="#4C6AFF" opacity="0.55" />
+            <text y="22" font-family="var(--font-brand)" font-weight="700" font-size="22" style="fill: var(--text-primary);">
+              <tspan x="0">P</tspan><tspan x="14">i</tspan><tspan x="20">n</tspan><tspan x="35">g</tspan><tspan x="49">O</tspan><tspan x="66">n</tspan>
+            </text>
+          </svg>
+        </div>
+        <span class="brand-tagline">Keep Your Network On.</span>
+      </div>
+      <button class="btn-icon hidden md:inline-flex" id="sidebar-collapse-toggle" title="Collapse sidebar">
+        <i data-lucide="panel-left-close"></i>
+      </button>
+    </div>
+
+    <nav class="flex flex-col gap-1">
+      <div class="nav-item active" data-view="dashboard" title="Dashboard">
+        <i data-lucide="layout-dashboard"></i>
+        <span>Dashboard</span>
+      </div>
+      <div class="nav-item" data-view="targets" title="Targets">
+        <i data-lucide="server"></i>
+        <span>Targets</span>
+      </div>
+      <div class="nav-item admin-only hidden" data-view="users" title="Users">
+        <i data-lucide="users"></i>
+        <span>Users</span>
+      </div>
+      <div class="nav-item admin-only hidden" data-view="backups" title="Database Backups">
+        <i data-lucide="database"></i>
+        <span>Backups</span>
+      </div>
+    </nav>
+
+    <div class="mt-auto pt-4 border-t flex flex-col gap-2" style="border-color: var(--glass-border);" id="sidebar-footer">
+      <div class="flex items-center gap-3 overflow-hidden mb-1">
+        <div class="w-8 h-8 rounded-full bg-blue-900/20 border flex items-center justify-center shrink-0" style="border-color: var(--glass-border);">
+          <i data-lucide="user" style="width: 16px; height: 16px; color: var(--text-secondary);"></i>
+        </div>
+        <div class="flex flex-col min-w-0 flex-1 sidebar-text-hide">
+          <span class="text-sm font-medium truncate" style="color: var(--text-primary);" id="auth-username">User</span>
+          <span class="text-xs truncate" style="color: var(--text-muted); text-transform: capitalize;" id="auth-role">Role</span>
+        </div>
+      </div>
+      <button class="btn btn-ghost w-full justify-start text-xs sidebar-text-hide" style="height: 32px; padding: 0 10px; gap: 8px;" id="btn-open-change-password">
+        <i data-lucide="key-round" style="width: 14px; height: 14px;"></i> <span>Change Password</span>
+      </button>
+      <button class="btn btn-ghost w-full justify-start text-xs sidebar-text-hide" style="height: 32px; padding: 0 10px; gap: 8px;" onclick="logout()">
+        <i data-lucide="log-out" style="width: 14px; height: 14px;"></i> <span>Logout</span>
+      </button>
+    </div>
+  </aside>
+
+  <!-- Mobile sidebar overlay -->
+  <div id="mobile-nav-overlay" class="fixed inset-0 bg-black/60 z-40 hidden md:hidden"></div>
+
+  <!-- Main -->
+  <div class="flex-1 flex flex-col min-w-0">
+
+    <!-- Topbar -->
+    <header class="glass-panel sticky top-0 z-30 flex items-center justify-between px-4 md:px-6 h-16 border-b" style="border-color: var(--glass-border);">
+      <div class="flex items-center gap-3">
+        <button id="mobile-menu-btn" class="btn-icon md:hidden" style="display:inline-flex;">
+          <i data-lucide="menu"></i>
+        </button>
+        <h1 class="text-lg" id="page-title">Dashboard</h1>
+      </div>
+      <div class="flex items-center gap-4">
+        <div class="hidden sm:flex items-center gap-2">
+          <label class="label" for="refresh-select">Auto refresh:</label>
+          <select id="refresh-select" class="btn-ghost btn text-sm h-8" style="padding: 0 10px 0 10px;">
+            <option value="5000">5s</option>
+            <option value="10000" selected>10s</option>
+            <option value="30000">30s</option>
+            <option value="60000">60s</option>
+            <option value="0">Off</option>
+          </select>
+        </div>
+        <div id="system-status" class="system-status">
+          <span class="dot"></span>
+          <span id="system-status-text">Checking…</span>
+        </div>
+        <button id="theme-toggle" class="btn-icon" title="Toggle theme">
+          <i data-lucide="sun"></i>
+        </button>
+      </div>
+    </header>
+
+    <main class="flex-1 p-4 md:p-6">
+
+      <!-- ============ DASHBOARD VIEW ============ -->
+      <section id="view-dashboard">
+        <div class="grid grid-cols-2 lg:grid-cols-5 gap-4 mb-6">
+          <div class="card">
+            <p class="label mb-2">TOTAL TARGETS</p>
+            <p class="metric-lg" id="stat-total">0</p>
+          </div>
+          <div class="card">
+            <p class="label mb-2">UP</p>
+            <p class="metric-lg" id="stat-up" style="color:#4ade80;">0</p>
+          </div>
+          <div class="card">
+            <p class="label mb-2">DEGRADED</p>
+            <p class="metric-lg" id="stat-degraded" style="color:#e8879a;">0</p>
+          </div>
+          <div class="card">
+            <p class="label mb-2">DOWN</p>
+            <p class="metric-lg" id="stat-down" style="color:#ff6b6b;">0</p>
+          </div>
+          <div class="card">
+            <p class="label mb-2">PAUSED</p>
+            <p class="metric-lg" id="stat-paused" style="color:#c9a9a9;">0</p>
+          </div>
+        </div>
+
+        <div class="flex items-center justify-between mb-3">
+          <h2 class="text-base">Target Monitoring</h2>
+          <p class="label mono">LAST UPDATE <span id="last-update">--:--:--</span></p>
+        </div>
+
+        <div class="card" style="padding: 0;">
+          <div id="dashboard-table-wrap" class="table-wrap"></div>
+        </div>
+      </section>
+
+      <!-- ============ TARGETS VIEW ============ -->
+      <section id="view-targets" class="hidden">
+        <div class="flex items-center justify-between mb-4">
+          <h2 class="text-base">Manage Targets</h2>
+          <button class="btn btn-primary admin-only hidden" id="btn-add-target-2">
+            <i data-lucide="plus"></i> Add Target
+          </button>
+        </div>
+        <div class="card" style="padding: 0;">
+          <div id="targets-table-wrap" class="table-wrap"></div>
+        </div>
+      </section>
+
+      <!-- ============ TARGET DETAIL VIEW ============ -->
+      <section id="view-detail" class="hidden">
+        <button class="btn btn-ghost mb-4" id="btn-back-to-targets">
+          <i data-lucide="arrow-left"></i> Back
+        </button>
+
+        <div class="card mb-6">
+          <div class="flex items-start justify-between flex-wrap gap-4">
+            <div>
+              <h2 class="text-xl mb-1" id="detail-name">--</h2>
+              <p class="mono" style="color: var(--text-secondary);" id="detail-host">--</p>
+            </div>
+            <div class="flex flex-col items-end gap-3">
+              <span class="badge badge-unknown" id="detail-status-badge">
+                <i data-lucide="circle-dashed"></i> UNKNOWN
+              </span>
+              <div class="flex gap-2" id="detail-actions"></div>
+            </div>
+          </div>
+
+          <div class="grid grid-cols-2 lg:grid-cols-4 gap-4 mt-6">
+            <div>
+              <p class="label mb-1">Current Latency</p>
+              <p class="metric" id="detail-current-latency" style="font-size:1.1rem;">--</p>
+            </div>
+            <div>
+              <p class="label mb-1">Packet Loss</p>
+              <p class="metric" id="detail-packet-loss" style="font-size:1.1rem;">--</p>
+            </div>
+            <div>
+              <p class="label mb-1">Min / Avg / Max</p>
+              <p class="metric" id="detail-min-avg-max" style="font-size:1.1rem;">--</p>
+            </div>
+            <div>
+              <p class="label mb-1">Last Check</p>
+              <p class="metric" id="detail-last-check" style="font-size:1.1rem;">--</p>
+            </div>
+          </div>
+        </div>
+
+        <div class="card mb-6 collapsible" id="section-heartbeat">
+          <div class="flex items-center justify-between flex-wrap gap-2">
+            <div class="collapsible-header" data-collapsible-toggle>
+              <i data-lucide="chevron-down" class="group-chevron"></i>
+              <h3 class="text-sm" style="color: var(--text-secondary);">Heartbeat</h3>
+            </div>
+            <span class="heartbeat-current" id="heartbeat-current">
+              <span class="heartbeat-current-dot"></span>
+              <span id="heartbeat-current-text">--</span>
+            </span>
+          </div>
+
+          <div class="collapsible-body">
+            <div class="heartbeat-summary" id="heartbeat-summary">
+              <div>
+                <p class="label mb-1">24h Availability</p>
+                <p class="metric" id="hb-availability" style="font-size:1.05rem;">--</p>
+              </div>
+              <div>
+                <p class="label mb-1">Uptime</p>
+                <p class="metric" id="hb-uptime" style="font-size:1.05rem;">--</p>
+              </div>
+              <div>
+                <p class="label mb-1">Downtime</p>
+                <p class="metric" id="hb-downtime" style="font-size:1.05rem;">--</p>
+              </div>
+              <div>
+                <p class="label mb-1">Incidents</p>
+                <p class="metric" id="hb-incidents" style="font-size:1.05rem;">--</p>
+              </div>
+            </div>
+
+            <div class="heartbeat-bar-wrap" style="margin-top: 16px;">
+              <div class="heartbeat-bar" id="heartbeat-bar"></div>
+              <div class="heartbeat-range-labels">
+                <span id="heartbeat-range-start">--</span>
+                <span>Last 24 hours</span>
+                <span>Now</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <div class="card mb-6 collapsible" id="section-latency-chart">
+          <div class="collapsible-header" data-collapsible-toggle>
+            <i data-lucide="chevron-down" class="group-chevron"></i>
+            <h3 class="text-sm" style="color: var(--text-secondary);">Latency History</h3>
+          </div>
+          <div class="collapsible-body">
+            <div id="chart-latency" style="min-height: 220px; margin-top: 12px;"></div>
+          </div>
+        </div>
+
+        <div class="card collapsible" id="section-loss-chart">
+          <div class="collapsible-header" data-collapsible-toggle>
+            <i data-lucide="chevron-down" class="group-chevron"></i>
+            <h3 class="text-sm" style="color: var(--text-secondary);">Packet Loss</h3>
+          </div>
+          <div class="collapsible-body">
+            <div id="chart-loss" style="min-height: 180px; margin-top: 12px;"></div>
+          </div>
+        </div>
+      </section>
+
+      <!-- Users View -->
+      <section id="view-users" class="hidden">
+        <div class="card p-0 overflow-hidden mb-6">
+          <div class="px-5 py-4 border-b flex items-center justify-between" style="border-color: var(--glass-border);">
+            <div>
+              <h2 class="text-sm font-semibold m-0">User Management</h2>
+              <p class="label mt-1">Manage administrators and guests</p>
+            </div>
+            <button class="btn btn-primary" id="btn-add-user" style="height: 36px; padding: 0 16px;">
+              <i data-lucide="plus" style="width: 14px; height: 14px;"></i> Add User
+            </button>
+          </div>
+          <div class="overflow-x-auto">
+            <table class="data-table w-full">
+              <thead>
+                <tr>
+                  <th style="width: 25%;">Username</th>
+                  <th style="width: 25%;">Role</th>
+                  <th style="width: 15%;">Status</th>
+                  <th style="width: 20%;">Created</th>
+                  <th style="width: 15%; text-align: right;">Actions</th>
+                </tr>
+              </thead>
+              <tbody id="table-users">
+                <!-- User rows rendered here -->
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+      <!-- Database Backups View -->
+      <section id="view-backups" class="hidden">
+        <div class="glass p-6">
+          <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
+            <div>
+              <h2 class="text-lg">Database Backups</h2>
+              <p class="label mb-0">Periodic automated SQLite snapshots, manual backup creation, and database restore.</p>
+            </div>
+            <div class="flex items-center gap-2 flex-wrap">
+              <input type="file" id="input-upload-backup" accept=".db" style="display: none;" />
+              <button class="btn btn-ghost" id="btn-upload-backup">
+                <i data-lucide="upload"></i> Upload Backup
+              </button>
+              <button class="btn btn-primary" id="btn-create-backup">
+                <i data-lucide="database"></i> Backup Database Now
+              </button>
+            </div>
+          </div>
+
+          <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-6">
+            <div class="glass-panel p-4 rounded-xl flex items-center gap-3">
+              <div class="w-10 h-10 rounded-lg flex items-center justify-center shrink-0" style="background: rgba(34, 197, 94, 0.15); color: var(--green);">
+                <i data-lucide="clock" style="width: 20px; height: 20px;"></i>
+              </div>
+              <div>
+                <div class="text-xs text-muted">Automatic Schedule</div>
+                <div class="text-sm font-medium">Daily Periodic Backup (Retention: 14 copies)</div>
+              </div>
+            </div>
+            <div class="glass-panel p-4 rounded-xl flex items-center gap-3">
+              <div class="w-10 h-10 rounded-lg flex items-center justify-center shrink-0" style="background: rgba(76, 106, 255, 0.15); color: #7aa2f7;">
+                <i data-lucide="hard-drive" style="width: 20px; height: 20px;"></i>
+              </div>
+              <div>
+                <div class="text-xs text-muted">Storage Path</div>
+                <div class="text-sm font-medium"><code>backend/data/backups/</code></div>
+              </div>
+            </div>
+          </div>
+
+          <div class="overflow-x-auto">
+            <table class="data-table w-full">
+              <thead>
+                <tr>
+                  <th style="width: 40%;">Backup File</th>
+                  <th style="width: 20%;">Size</th>
+                  <th style="width: 25%;">Created At</th>
+                  <th style="width: 15%; text-align: right;">Actions</th>
+                </tr>
+              </thead>
+              <tbody id="table-backups">
+                <!-- Backup rows rendered here -->
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+
+
+
+    </main>
+  </div>
+</div>
+
+<!-- Empty state (rendered into table wraps when there are no targets) -->
+<template id="tpl-empty-state">
+  <div class="flex flex-col items-center justify-center text-center py-16 px-6">
+    <div class="w-12 h-12 rounded-full flex items-center justify-center mb-4" style="background: rgba(255,255,255,0.06);">
+      <i data-lucide="server-off" style="width:22px;height:22px;color:var(--text-muted);"></i>
+    </div>
+    <h3 class="text-base mb-1">No monitoring targets</h3>
+    <p class="label mb-5" style="max-width: 320px;">Add your first IP address or hostname to start monitoring.</p>
+    <button class="btn btn-primary btn-add-target-empty admin-only hidden">
+      <i data-lucide="plus"></i> Add Target
+    </button>
+  </div>
+</template>
+
+<!-- Change Password Modal -->
+<div class="modal-overlay hidden" id="modal-change-password">
+  <div class="modal-box" style="max-width: 440px;">
+    <div class="flex items-center justify-between mb-4">
+      <div>
+        <h3 class="text-base" id="modal-change-password-title">Change Password</h3>
+        <p class="label mb-0" id="modal-change-password-subtitle" style="font-size: 0.8125rem;">Update your account password</p>
+      </div>
+      <button type="button" class="btn-icon" id="modal-change-password-close"><i data-lucide="x"></i></button>
+    </div>
+
+    <!-- Mandatory password change alert banner -->
+    <div id="force-password-alert" class="hidden mb-4 p-3 rounded-lg flex items-start gap-2.5" style="background: rgba(224, 175, 104, 0.12); border: 1px solid rgba(224, 175, 104, 0.3); color: #e0af68; font-size: 0.8125rem;">
+      <i data-lucide="shield-alert" style="width: 18px; height: 18px; flex-shrink: 0; margin-top: 2px;"></i>
+      <div>
+        <strong style="color: #f1c40f;">Password change required</strong>
+        <p class="mt-0.5" style="color: var(--text-secondary); line-height: 1.4;">Your account is currently using default credentials (<code>admin123</code>). For security, you must set a new password before proceeding.</p>
+      </div>
+    </div>
+
+    <form id="form-change-password" novalidate>
+      <div class="field" id="field-old-password">
+        <label for="input-old-password">Current Password</label>
+        <div style="position: relative;">
+          <input type="password" id="input-old-password" placeholder="••••••••" style="padding-right: 40px;" autocomplete="current-password" />
+          <button type="button" class="btn-pw-toggle" data-target="input-old-password" style="position: absolute; right: 8px; top: 8px; background: none; border: none; cursor: pointer; color: var(--text-secondary);" title="Toggle password visibility">
+            <i data-lucide="eye" style="width: 16px; height: 16px;"></i>
+          </button>
+        </div>
+        <p class="error-text" id="old-password-error-text">Current password is required.</p>
+      </div>
+      <div class="field" id="field-new-password">
+        <label for="input-new-password">New Password</label>
+        <div style="position: relative;">
+          <input type="password" id="input-new-password" placeholder="••••••••" style="padding-right: 40px;" autocomplete="new-password" />
+          <button type="button" class="btn-pw-toggle" data-target="input-new-password" style="position: absolute; right: 8px; top: 8px; background: none; border: none; cursor: pointer; color: var(--text-secondary);" title="Toggle password visibility">
+            <i data-lucide="eye" style="width: 16px; height: 16px;"></i>
+          </button>
+        </div>
+        <p class="text-xs mt-1" style="color: var(--text-muted);" id="help-new-password">Minimum 8 characters. Must not be admin123.</p>
+        <p class="error-text" id="new-password-error-text">New password must be at least 8 characters.</p>
+      </div>
+      <div class="field" id="field-confirm-password">
+        <label for="input-confirm-password">Confirm New Password</label>
+        <div style="position: relative;">
+          <input type="password" id="input-confirm-password" placeholder="••••••••" style="padding-right: 40px;" autocomplete="new-password" />
+          <button type="button" class="btn-pw-toggle" data-target="input-confirm-password" style="position: absolute; right: 8px; top: 8px; background: none; border: none; cursor: pointer; color: var(--text-secondary);" title="Toggle password visibility">
+            <i data-lucide="eye" style="width: 16px; height: 16px;"></i>
+          </button>
+        </div>
+        <p class="error-text" id="confirm-password-error-text">New password and confirmation do not match.</p>
+      </div>
+      <div class="flex justify-end gap-2 mt-6">
+        <button type="button" class="btn btn-ghost" id="modal-change-password-cancel">Cancel</button>
+        <button type="submit" class="btn btn-primary" id="modal-change-password-submit">Update Password</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- Add / Edit User Modal -->
+<div class="modal-overlay hidden" id="modal-user">
+  <div class="modal-box" style="max-width: 420px;">
+    <h2 class="text-lg mb-1" id="modal-user-title">Add User</h2>
+    <p class="label mb-5" id="modal-user-desc">Create a new user account.</p>
+    <form id="form-user">
+      <input type="hidden" id="input-user-id" />
+      <div class="field">
+        <label>Username</label>
+        <input type="text" id="input-username" placeholder="e.g. nocuser" />
+      </div>
+      <div class="field">
+        <label>Password</label>
+        <div style="position: relative;">
+          <input type="password" id="input-password" placeholder="••••••••" style="padding-right: 40px;" />
+          <button type="button" id="btn-toggle-password" style="position: absolute; right: 8px; top: 8px; background: none; border: none; cursor: pointer; color: var(--text-secondary);">
+            <i data-lucide="eye" style="width: 16px; height: 16px;"></i>
+          </button>
+        </div>
+        <p class="text-xs mt-1" style="color: var(--text-muted);" id="help-password">Minimum 8 characters.</p>
+      </div>
+      <div class="field">
+        <label>Role</label>
+        <select id="input-user-role" class="w-full" style="height: 40px; border-radius: var(--radius-sm); border: 1px solid var(--glass-border); background: var(--input-bg); color: var(--text-primary); padding: 0 12px; outline: none;">
+          <option value="administrator">Administrator</option>
+          <option value="guest" selected>Guest</option>
+        </select>
+      </div>
+      <div class="flex items-center justify-between mb-2 mt-4 pt-4 border-t" style="border-color: var(--glass-border);">
+        <span class="label mb-0">Account Active</span>
+        <label class="switch">
+          <input type="checkbox" id="input-user-active" checked />
+          <span class="slider"></span>
+        </label>
+      </div>
+      <div class="flex justify-end gap-2 mt-6">
+        <button type="button" class="btn btn-ghost" id="modal-user-cancel">Cancel</button>
+        <button type="submit" class="btn btn-primary" id="modal-user-submit">Save User</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- Add / Edit Target Modal -->
+<div class="modal-overlay hidden" id="modal-target">
+  <div class="modal-box">
+    <div class="flex items-center justify-between mb-4">
+      <h3 class="text-base" id="modal-target-title">Add Target</h3>
+      <button class="btn-icon" id="modal-target-close"><i data-lucide="x"></i></button>
+    </div>
+    <form id="form-target">
+      <div class="field" id="field-name">
+        <label>Name</label>
+        <input type="text" id="input-name" placeholder="Google DNS" />
+        <p class="error-text">Name is required.</p>
+      </div>
+      <div class="field" id="field-host">
+        <label>IP Address / Hostname</label>
+        <input type="text" id="input-host" placeholder="8.8.8.8" />
+        <p class="error-text" id="host-error-text">Enter a valid IP or hostname.</p>
+      </div>
+      <div class="collapsible mb-3" id="section-advanced-settings">
+        <div class="collapsible-header" data-collapsible-toggle style="margin-bottom: 8px;">
+          <i data-lucide="chevron-down" class="group-chevron"></i>
+          <span class="label">Advanced Settings</span>
+        </div>
+        <div class="collapsible-body">
+          <div class="grid grid-cols-3 gap-3">
+            <div class="field">
+              <label>Ping Count</label>
+              <input type="number" id="input-count" value="4" min="1" max="20" />
+            </div>
+            <div class="field">
+              <label>Timeout (s)</label>
+              <input type="number" id="input-timeout" value="1" min="0.1" max="10" step="0.1" />
+            </div>
+            <div class="field">
+              <label>Interval (s)</label>
+              <input type="number" id="input-interval" value="10" min="1" max="3600" />
+            </div>
+          </div>
+          
+          <!-- Telegram Notification Section -->
+          <div class="mt-4 pt-4 border-t" style="border-color: var(--glass-border);">
+            <div class="flex items-center justify-between mb-3">
+              <span class="label mb-0">Telegram Notification</span>
+              <label class="switch">
+                <input type="checkbox" id="input-telegram-enabled" />
+                <span class="slider"></span>
+              </label>
+            </div>
+
+            <div id="telegram-fields" class="hidden">
+              <!-- 2-column grid for credentials + events -->
+              <div style="display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; margin-bottom: 4px;">
+                <!-- Left column: Name + Chat ID -->
+                <div>
+                  <div class="field" id="field-telegram-name">
+                    <label>Name</label>
+                    <input type="text" id="input-telegram-name" placeholder="NOC Telegram" />
+                    <p class="error-text">Name is required.</p>
+                  </div>
+                  <div class="field" id="field-telegram-chat">
+                    <label>Chat ID</label>
+                    <input type="text" id="input-telegram-chat" placeholder="-1001234567890" />
+                    <p class="error-text">Chat ID is required.</p>
+                  </div>
+                </div>
+                <!-- Right column: Bot Token + Notification Events -->
+                <div>
+                  <div class="field" id="field-telegram-token">
+                    <label>Bot Token</label>
+                    <input type="password" id="input-telegram-token" placeholder="123456789:AAxxxxxxxxx" />
+                    <p class="error-text">Bot Token is required.</p>
+                  </div>
+                  <div class="field">
+                    <label>Notification Events</label>
+                    <div style="display: flex; flex-direction: column; gap: 10px; padding: 6px 0;">
+                      <div style="display: flex; align-items: center; gap: 8px; white-space: nowrap;">
+                        <input type="checkbox" id="input-telegram-notify-down" checked />
+                        <label for="input-telegram-notify-down" style="font-size:0.875rem; color:var(--text-primary); cursor:pointer; margin:0; white-space:nowrap;">Notify on DOWN</label>
+                      </div>
+                      <div style="display: flex; align-items: center; gap: 8px; white-space: nowrap;">
+                        <input type="checkbox" id="input-telegram-notify-up" checked />
+                        <label for="input-telegram-notify-up" style="font-size:0.875rem; color:var(--text-primary); cursor:pointer; margin:0; white-space:nowrap;">Notify on UP</label>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </div>
+
+              <!-- Full-width: Custom template toggle -->
+              <div class="flex items-center justify-between mt-2 mb-3 pt-3" style="border-top: 1px solid var(--glass-border);">
+                <span class="label mb-0" style="text-transform: none;">Use custom message template</span>
+                <label class="switch">
+                  <input type="checkbox" id="input-telegram-custom" />
+                  <span class="slider"></span>
+                </label>
+              </div>
+
+              <!-- Full-width: Template textareas (hidden when custom=OFF) -->
+              <div id="telegram-custom-fields" class="hidden">
+                <div class="field" style="margin-bottom: 16px;">
+                  <label>DOWN Message Template</label>
+                  <textarea id="input-telegram-tpl-down" rows="5" placeholder="🔴 PingOn Alert&#10;&#10;Target: {target_name}&#10;IP: {target_address}&#10;Status: {status}&#10;Time: {timestamp}"></textarea>
+                </div>
+                <div class="field" style="margin-bottom: 12px;">
+                  <label>UP Message Template</label>
+                  <textarea id="input-telegram-tpl-up" rows="5" placeholder="🟢 PingOn Recovery&#10;&#10;Target: {target_name}&#10;IP: {target_address}&#10;Status: {status}&#10;Time: {timestamp}&#10;Latency: {latency} ms"></textarea>
+                </div>
+                <div class="text-xs mb-3" style="color: var(--text-muted); line-height: 1.6;">
+                  Available variables:
+                  <code style="background: rgba(255,255,255,0.07); padding: 1px 5px; border-radius: 3px; font-size: 0.75rem;">{target_name}</code>
+                  <code style="background: rgba(255,255,255,0.07); padding: 1px 5px; border-radius: 3px; font-size: 0.75rem;">{target_address}</code>
+                  <code style="background: rgba(255,255,255,0.07); padding: 1px 5px; border-radius: 3px; font-size: 0.75rem;">{status}</code>
+                  <code style="background: rgba(255,255,255,0.07); padding: 1px 5px; border-radius: 3px; font-size: 0.75rem;">{latency}</code>
+                  <code style="background: rgba(255,255,255,0.07); padding: 1px 5px; border-radius: 3px; font-size: 0.75rem;">{packet_loss}</code>
+                  <code style="background: rgba(255,255,255,0.07); padding: 1px 5px; border-radius: 3px; font-size: 0.75rem;">{timestamp}</code>
+                </div>
+              </div>
+
+              <!-- Test Telegram button: right-aligned -->
+              <div class="flex justify-end mt-2">
+                <button type="button" class="btn btn-ghost" id="btn-test-telegram" style="gap: 6px;">
+                  <i data-lucide="send" style="width:15px;height:15px;"></i> Test Telegram
+                </button>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+      <div class="flex justify-end gap-2 mt-2">
+        <button type="button" class="btn btn-ghost" id="modal-target-cancel">Cancel</button>
+        <button type="submit" class="btn btn-primary" id="modal-target-submit">Add Target</button>
+      </div>
+    </form>
+  </div>
+</div>
+
+<!-- Confirmation Modal (shared: Delete / Pause / Resume) -->
+<div class="modal-overlay hidden" id="modal-confirm">
+  <div class="modal-box" style="max-width: 380px;">
+    <h3 class="text-base mb-2" id="confirm-modal-title">--</h3>
+    <p class="row-name mb-0" id="confirm-target-name">--</p>
+    <p class="mono mb-3" style="color: var(--text-secondary);" id="confirm-target-host">--</p>
+    <p class="label mb-5" id="confirm-modal-body">--</p>
+    <div class="flex justify-end gap-2">
+      <button class="btn btn-ghost" id="modal-confirm-cancel">Cancel</button>
+      <button class="btn btn-danger" id="modal-confirm-action">Confirm</button>
+    </div>
+  </div>
+</div>
+
+<!-- Heartbeat segment tooltip (custom component, reused for every
+     hovered segment — not the native browser title attribute). -->
+<div class="heartbeat-tooltip hidden" id="heartbeat-tooltip">
+  <div class="heartbeat-tooltip-row">
+    <span class="heartbeat-tooltip-label">Status</span>
+    <span id="tooltip-status" style="font-weight: 600;">--</span>
+  </div>
+  <div class="heartbeat-tooltip-row">
+    <span class="heartbeat-tooltip-label">Time</span>
+    <span id="tooltip-time">--</span>
+  </div>
+  <div class="heartbeat-tooltip-row">
+    <span class="heartbeat-tooltip-label">Latency</span>
+    <span id="tooltip-latency">--</span>
+  </div>
+  <div class="heartbeat-tooltip-row" id="tooltip-loss-row">
+    <span class="heartbeat-tooltip-label">Packet Loss</span>
+    <span id="tooltip-loss">--</span>
+  </div>
+</div>
+
+<script>
+/* ==========================================================
+   PingOn — frontend application logic (vanilla JS)
+
+   Architecture reminder (see prompt section 37): this file NEVER
+   triggers a background-monitoring ping via polling. Auto-refresh
+   only reads GET /api/dashboard (or /api/targets/{id}/history), which
+   reflect whatever the backend's independent monitoring loop already
+   produced. The only endpoint that causes a new ICMP ping is
+   POST /api/ping, fired solely by the "Ping" button.
+   ========================================================== */
+
+const state = {
+  apiBase: localStorage.getItem("pm_api_base") || "",
+  view: "dashboard",
+  targets: [],           // last known dashboard payload targets[]
+  refreshMs: 10000,
+  refreshTimer: null,
+  detailTargetId: null,
+  toastedCheckpoints: {}, // target_id -> last_check we've already toasted
+  uplotLatency: null,
+  uplotLoss: null,
+};
+
+function qs(id) {
+  return document.getElementById(id);
+}
+
+/* ---------------------------------------------------------- Auth ---- */
+
+function getToken() {
+  return sessionStorage.getItem("access_token");
+}
+
+function setToken(token) {
+  sessionStorage.setItem("access_token", token);
+}
+
+function clearToken() {
+  sessionStorage.removeItem("access_token");
+  sessionStorage.removeItem("user_role");
+  sessionStorage.removeItem("username");
+}
+
+function isAuthenticated() {
+  return !!getToken();
+}
+
+function logout() {
+  clearToken();
+  sessionStorage.setItem("just_logged_out", "1");
+  window.location.href = "/login.html?from=logout";
+}
+
+const currentUser = {
+  role: sessionStorage.getItem("user_role") || "guest",
+  username: sessionStorage.getItem("username") || ""
+};
+
+// Route Guard
+if (!isAuthenticated()) {
+  window.location.href = "/login.html";
+}
+
+/* ---------------------------------------------------------- API ---- */
+
+async function api(path, options = {}) {
+  const url = `${state.apiBase}${path}`;
+  const headers = { "Content-Type": "application/json", ...options.headers };
+  
+  const token = getToken();
+  if (token) {
+    headers["Authorization"] = `Bearer ${token}`;
+  }
+
+  let res;
+  try {
+    res = await fetch(url, { ...options, headers });
+  } catch (err) {
+    throw new Error("Unable to reach the monitoring backend.");
+  }
+  
+  if (res.status === 401) {
+    clearToken();
+    window.location.href = "/login.html";
+    throw new Error("Session expired. Please log in again.");
+  }
+
+
+  if (res.status === 204) return null;
+
+  let body = null;
+  try {
+    body = await res.json();
+  } catch (_) {
+    body = null;
+  }
+
+  if (!res.ok) {
+    const friendly = friendlyErrorMessage(res.status, body);
+    const error = new Error(friendly);
+    error.status = res.status;
+    error.body = body;
+    throw error;
+  }
+
+  return body;
+}
+
+function friendlyErrorMessage(status, body) {
+  if (body && typeof body.detail === "string") return body.detail;
+  if (body && Array.isArray(body.detail) && body.detail[0]?.msg) return body.detail[0].msg;
+  if (status === 422) return "Please check the values you entered.";
+  if (status === 404) return "That target could not be found. It may have been deleted.";
+  if (status === 400) return "The request could not be processed.";
+  if (status === 503) return "The monitoring backend is temporarily unavailable.";
+  if (status >= 500) return "Something went wrong on the monitoring backend.";
+  return "Unable to complete this request.";
+}
+
+/* ------------------------------------------------------- Toasts ---- */
+
+function showToast(kind, title, body) {
+  const container = qs("toast-container");
+  const el = document.createElement("div");
+  el.className = `toast ${kind}`;
+  el.innerHTML = `<div class="toast-title">${escapeHtml(title)}</div><div class="toast-body">${escapeHtml(body)}</div>`;
+  container.appendChild(el);
+  setTimeout(() => {
+    el.style.transition = "opacity 0.25s ease";
+    el.style.opacity = "0";
+    setTimeout(() => el.remove(), 250);
+  }, 5000);
+}
+
+function escapeHtml(str) {
+  const div = document.createElement("div");
+  div.textContent = str ?? "";
+  return div.innerHTML;
+}
+
+/* --------------------------------------------------- Formatting ---- */
+
+function fmtLatency(v) {
+  return v === null || v === undefined ? "--" : `${Number(v).toFixed(1)} ms`;
+}
+
+function fmtLoss(v) {
+  if (v === null || v === undefined) return "--";
+  const n = Math.max(0, Math.min(100, Number(v)));
+  return Number.isInteger(n) ? `${n}%` : `${n.toFixed(1)}%`;
+}
+
+function fmtRelativeTime(iso) {
+  if (!iso) return "never";
+  const then = new Date(iso).getTime();
+  const diffSec = Math.max(0, Math.round((Date.now() - then) / 1000));
+  if (diffSec < 5) return "just now";
+  if (diffSec < 60) return `${diffSec} sec ago`;
+  const min = Math.round(diffSec / 60);
+  if (min < 60) return `${min} min ago`;
+  const hr = Math.round(min / 60);
+  return `${hr} hr ago`;
+}
+
+function fmtClock(iso) {
+  if (!iso) return "--:--:--";
+  const d = new Date(iso);
+  return d.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false });
+}
+
+/** 24-hour "YYYY-MM-DD HH:mm:ss" used for uPlot's cursor legend ("Time: ..."). */
+function fmtLegendTime(unixSeconds) {
+  const d = new Date(unixSeconds * 1000);
+  const pad = (n) => String(n).padStart(2, "0");
+  const date = `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`;
+  const time = `${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+  return `${date} ${time}`;
+}
+
+/** 24-hour "HH:mm" used for chart axis tick labels. */
+function fmtAxisTime(unixSeconds) {
+  return new Date(unixSeconds * 1000).toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", hour12: false });
+}
+
+const STATUS_META = {
+  UP: { cls: "badge-up", icon: "circle-check" },
+  DOWN: { cls: "badge-down", icon: "circle-x" },
+  DEGRADED: { cls: "badge-degraded", icon: "alert-triangle" },
+  PAUSED: { cls: "badge-paused", icon: "pause-circle" },
+};
+
+function statusBadge(status) {
+  const s = (status || "UNKNOWN").toUpperCase();
+  const meta = STATUS_META[s] || { cls: "badge-unknown", icon: "circle-dashed" };
+  return `<span class="badge ${meta.cls}"><i data-lucide="${meta.icon}"></i>${s}</span>`;
+}
+
+/* ------------------------------------------------------- Views ----- */
+
+function switchView(view) {
+  state.view = view;
+  ["dashboard", "targets", "detail", "users", "backups"].forEach((v) => {
+    const el = qs(`view-${v}`);
+    if (el) el.classList.toggle("hidden", v !== view);
+  });
+  document.querySelectorAll(".nav-item[data-view]").forEach((el) => {
+    el.classList.toggle("active", el.dataset.view === view);
+  });
+  const titles = { 
+    dashboard: "Dashboard", 
+    targets: "Targets", 
+    detail: "Target Detail", 
+    users: "User Management",
+    backups: "Database Backups" 
+  };
+  qs("page-title").textContent = titles[view] || "Dashboard";
+  closeMobileNav();
+  
+  if (view === "users") {
+    fetchUsers();
+  } else if (view === "backups") {
+    fetchBackups();
+  }
+}
+
+/* --------------------------------------------------- Database Backups ---- */
+
+async function fetchBackups() {
+  if (currentUser.role !== "administrator") return;
+  const tbody = qs("table-backups");
+  if (!tbody) return;
+
+  try {
+    const backups = await api("/api/database/backups");
+    if (!backups.length) {
+      tbody.innerHTML = `<tr><td colspan="4" class="text-center py-6 text-muted">No database backups available. Click "Backup Database Now" or "Upload Backup" to add one.</td></tr>`;
+      return;
+    }
+
+    tbody.innerHTML = backups.map(b => {
+      const dt = new Date(b.created_at);
+      const dateStr = dt.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' }) + ", " + dt.toLocaleTimeString('en-GB', { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false });
+      return `
+        <tr>
+          <td>
+            <div class="font-medium flex items-center gap-2">
+              <i data-lucide="file-database" style="width: 16px; height: 16px; color: var(--text-accent);"></i>
+              <span class="mono text-sm">${escapeHtml(b.filename)}</span>
+            </div>
+          </td>
+          <td><span class="mono text-sm text-secondary">${escapeHtml(b.size_formatted)}</span></td>
+          <td><span class="text-sm text-muted">${dateStr}</span></td>
+          <td class="text-right">
+            <div class="flex items-center justify-end gap-1">
+              <button class="btn-icon" title="Download Backup" onclick="downloadBackup('${escapeHtml(b.filename)}')"><i data-lucide="download"></i></button>
+              <button class="btn-icon" title="Restore Database" onclick="restoreBackup('${escapeHtml(b.filename)}')"><i data-lucide="rotate-ccw"></i></button>
+              <button class="btn-icon icon-btn-danger" title="Delete Backup" onclick="deleteBackup('${escapeHtml(b.filename)}')"><i data-lucide="trash-2"></i></button>
+            </div>
+          </td>
+        </tr>
+      `;
+    }).join("");
+    if (window.lucide) lucide.createIcons();
+  } catch (err) {
+    showToast("down", "Failed to load backups", err.message);
+  }
+}
+
+async function handleBackupUpload(e) {
+  const file = e.target.files && e.target.files[0];
+  if (!file) return;
+
+  const btn = qs("btn-upload-backup");
+  const originalHtml = btn ? btn.innerHTML : "";
+  if (btn) {
+    btn.disabled = true;
+    btn.innerHTML = `<i data-lucide="loader-2" style="width:16px;height:16px;animation:spin 0.7s linear infinite;"></i> Uploading\u2026`;
+    if (window.lucide) lucide.createIcons();
+  }
+
+  try {
+    const formData = new FormData();
+    formData.append("file", file);
+
+    const token = getToken();
+    const headers = {};
+    if (token) headers["Authorization"] = `Bearer ${token}`;
+
+    const res = await fetch(`${state.apiBase}/api/database/upload`, {
+      method: "POST",
+      headers,
+      body: formData,
+    });
+
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      throw new Error(data.detail || "Failed to upload database backup");
+    }
+
+    showToast("up", "✓ Backup Uploaded", `File "${data.backup.filename}" uploaded and verified successfully.`);
+    await fetchBackups();
+  } catch (err) {
+    showToast("down", "✕ Upload Failed", err.message);
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.innerHTML = originalHtml;
+      if (window.lucide) lucide.createIcons();
+    }
+    e.target.value = "";
+  }
+}
+
+async function restoreBackup(filename) {
+  if (!confirm(`Are you sure you want to RESTORE the database from:\n"${filename}"?\n\nWARNING: Current database records will be overwritten with the data from this backup snapshot. An automatic safety snapshot will be created before restoring.\n\nDo you wish to proceed?`)) {
+    return;
+  }
+
+  showToast("info", "Restoring Database", `Restoring snapshot "${filename}"\u2026`);
+
+  try {
+    const res = await api(`/api/database/backups/${encodeURIComponent(filename)}/restore`, {
+      method: "POST"
+    });
+    showToast("up", "✓ Database Restored", res.message || "Database successfully restored. Monitoring targets refreshed.");
+    await fetchDashboard();
+    await fetchBackups();
+  } catch (err) {
+    showToast("down", "✕ Restore Failed", err.message || "Failed to restore database.");
+  }
+}
+
+async function createBackupNow() {
+  const btn = qs("btn-create-backup");
+  if (!btn) return;
+  const originalHtml = btn.innerHTML;
+  btn.disabled = true;
+  btn.innerHTML = `<i data-lucide="loader-2" style="width:16px;height:16px;animation:spin 0.7s linear infinite;"></i> Creating Backup\u2026`;
+  if (window.lucide) lucide.createIcons();
+
+  try {
+    const res = await api("/api/database/backup", { method: "POST" });
+    showToast("up", "✓ Backup Created", `Snapshot saved: ${res.backup.filename} (${res.backup.size_formatted})`);
+    await fetchBackups();
+  } catch (err) {
+    showToast("down", "✕ Backup Failed", err.message || "Failed to create database backup.");
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = originalHtml;
+    if (window.lucide) lucide.createIcons();
+  }
+}
+
+async function downloadBackup(filename) {
+  try {
+    const token = getToken();
+    const headers = {};
+    if (token) headers["Authorization"] = `Bearer ${token}`;
+    const res = await fetch(`${state.apiBase}/api/database/backups/${encodeURIComponent(filename)}/download`, {
+      headers
+    });
+    if (!res.ok) {
+      throw new Error("Failed to download backup file");
+    }
+    const blob = await res.blob();
+    const url = window.URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.style.display = "none";
+    a.href = url;
+    a.download = filename;
+    document.body.appendChild(a);
+    a.click();
+    window.URL.revokeObjectURL(url);
+    a.remove();
+    showToast("up", "Download Started", `Downloading ${filename}`);
+  } catch (err) {
+    showToast("down", "Download Failed", err.message);
+  }
+}
+
+async function deleteBackup(filename) {
+  if (!confirm(`Are you sure you want to delete backup "${filename}"?`)) return;
+  try {
+    await api(`/api/database/backups/${encodeURIComponent(filename)}`, { method: "DELETE" });
+    showToast("up", "Backup Deleted", `Removed ${filename}`);
+    await fetchBackups();
+  } catch (err) {
+    showToast("down", "Delete Failed", err.message);
+  }
+}
+
+/* --------------------------------------------------- Users Mgt ---- */
+
+async function fetchUsers() {
+  if (currentUser.role !== "administrator") return;
+  try {
+    const users = await api("/api/users");
+    const tbody = qs("table-users");
+    if (!users.length) {
+      tbody.innerHTML = `<tr><td colspan="5" class="text-center py-4 text-muted">No users found</td></tr>`;
+      return;
+    }
+    tbody.innerHTML = users.map(u => {
+      const isMe = u.username === currentUser.username;
+      const roleBadge = u.role === "administrator" 
+        ? `<span class="badge" style="background: rgba(158, 42, 58, 0.15); color: #ff8b8b; border: 1px solid rgba(255,139,139,0.2);">Admin</span>` 
+        : `<span class="badge" style="background: rgba(0, 0, 128, 0.2); color: #8ba4ff; border: 1px solid rgba(139,164,255,0.2);">Guest</span>`;
+      const statusBadge = u.is_active
+        ? `<span class="badge status-up">Active</span>`
+        : `<span class="badge status-unknown">Disabled</span>`;
+        
+      return `
+        <tr>
+          <td><div class="font-medium flex items-center gap-2">${escapeHtml(u.username)} ${isMe ? '<span class="text-xs text-muted">(you)</span>' : ''}</div></td>
+          <td>${roleBadge}</td>
+          <td>${statusBadge}</td>
+          <td class="text-sm text-muted">${new Date(u.created_at).toLocaleDateString()}</td>
+          <td class="text-right">
+            <div class="flex items-center justify-end gap-1">
+              <button class="btn-icon" title="Edit" onclick="openUserModal(${u.id})" ${isMe ? 'disabled' : ''}><i data-lucide="edit-2"></i></button>
+              <button class="btn-icon" title="Delete" onclick="deleteUser(${u.id})" ${isMe ? 'disabled' : ''} style="color: var(--red);"><i data-lucide="trash-2"></i></button>
+            </div>
+          </td>
+        </tr>
+      `;
+    }).join("");
+    lucide.createIcons();
+  } catch (err) {
+    showToast("error", "Failed to load users", err.message);
+  }
+}
+
+let editingUserId = null;
+
+function openUserModal(userId = null) {
+  editingUserId = userId;
+  qs("form-user").reset();
+  qs("input-user-id").value = userId || "";
+  qs("modal-user-title").textContent = userId ? "Edit User" : "Add User";
+  qs("modal-user-desc").textContent = userId ? "Update user account details." : "Create a new user account.";
+  
+  if (userId) {
+    // Fill data if editing... For simplicity, we can fetch again or pull from table.
+    // Easiest is to fetch single user:
+    api(`/api/users/${userId}`).then(u => {
+      qs("input-username").value = u.username;
+      qs("input-user-role").value = u.role;
+      qs("input-user-active").checked = u.is_active;
+    }).catch(err => showToast("error", "Error", err.message));
+  }
+  
+  qs("modal-user").classList.remove("hidden");
+}
+
+function closeUserModal() {
+  qs("modal-user").classList.add("hidden");
+}
+
+async function submitUserForm(e) {
+  e.preventDefault();
+  const btn = qs("modal-user-submit");
+  btn.disabled = true;
+  btn.innerHTML = `<i data-lucide="loader" class="animate-spin w-4 h-4"></i> Saving...`;
+  lucide.createIcons();
+  
+  const id = qs("input-user-id").value;
+  const payload = {
+    username: qs("input-username").value.trim(),
+    role: qs("input-user-role").value,
+    is_active: qs("input-user-active").checked
+  };
+  
+  const pass = qs("input-password").value;
+  if (pass) {
+    payload.password = pass;
+  }
+  
+  try {
+    if (id) {
+      await api(`/api/users/${id}`, { method: "PUT", body: JSON.stringify(payload) });
+      showToast("success", "Saved", "User updated successfully.");
+    } else {
+      if (!pass) throw new Error("Password is required for new users.");
+      await api("/api/users", { method: "POST", body: JSON.stringify(payload) });
+      showToast("success", "Created", "New user added successfully.");
+    }
+    closeUserModal();
+    fetchUsers();
+  } catch (err) {
+    showToast("error", "Error", err.message);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "Save User";
+  }
+}
+
+async function deleteUser(id) {
+  if (!confirm("Are you sure you want to delete this user?")) return;
+  try {
+    await api(`/api/users/${id}`, { method: "DELETE" });
+    showToast("success", "Deleted", "User has been removed.");
+    fetchUsers();
+  } catch (err) {
+    showToast("error", "Delete Failed", err.message);
+  }
+}
+
+/* ------------------------------------------- Change Password ---- */
+
+function clearChangePasswordErrors() {
+  ["field-old-password", "field-new-password", "field-confirm-password"].forEach(id => {
+    qs(id)?.classList.remove("has-error");
+  });
+}
+
+function setChangePasswordError(fieldId, textId, message) {
+  const field = qs(fieldId);
+  const textEl = qs(textId);
+  if (field) field.classList.add("has-error");
+  if (textEl) textEl.textContent = message;
+}
+
+let isForceChangePassword = false;
+
+function openChangePasswordModal(forced = false) {
+  isForceChangePassword = Boolean(forced);
+  const form = qs("form-change-password");
+  if (form) form.reset();
+  clearChangePasswordErrors();
+
+  const titleEl = qs("modal-change-password-title");
+  const subEl = qs("modal-change-password-subtitle");
+  const alertEl = qs("force-password-alert");
+  const closeBtn = qs("modal-change-password-close");
+  const cancelBtn = qs("modal-change-password-cancel");
+
+  if (isForceChangePassword) {
+    if (titleEl) titleEl.textContent = "Security Setup: Change Password";
+    if (subEl) subEl.textContent = "Default credentials must be updated before continuing";
+    alertEl?.classList.remove("hidden");
+    closeBtn?.classList.add("hidden");
+    cancelBtn?.classList.add("hidden");
+  } else {
+    if (titleEl) titleEl.textContent = "Change Password";
+    if (subEl) subEl.textContent = "Update your account password";
+    alertEl?.classList.add("hidden");
+    closeBtn?.classList.remove("hidden");
+    cancelBtn?.classList.remove("hidden");
+  }
+  
+  // Reset password visibility toggles back to password type
+  ["input-old-password", "input-new-password", "input-confirm-password"].forEach(id => {
+    const el = qs(id);
+    if (el) el.type = "password";
+  });
+  document.querySelectorAll("#modal-change-password .btn-pw-toggle").forEach(btn => {
+    btn.innerHTML = `<i data-lucide="eye" style="width: 16px; height: 16px;"></i>`;
+  });
+
+  qs("modal-change-password")?.classList.remove("hidden");
+  if (window.lucide) lucide.createIcons();
+  setTimeout(() => qs("input-old-password")?.focus(), 50);
+}
+
+function closeChangePasswordModal() {
+  if (isForceChangePassword) return;
+  clearChangePasswordErrors();
+  qs("modal-change-password")?.classList.add("hidden");
+}
+
+async function submitChangePasswordForm(e) {
+  e.preventDefault();
+  clearChangePasswordErrors();
+
+  const oldPassword = qs("input-old-password").value;
+  const newPassword = qs("input-new-password").value;
+  const confirmPassword = qs("input-confirm-password").value;
+
+  if (!oldPassword) {
+    setChangePasswordError("field-old-password", "old-password-error-text", "Current password is required.");
+    showToast("down", "Validation Error", "Please enter your current password.");
+    qs("input-old-password")?.focus();
+    return;
+  }
+
+  if (!newPassword) {
+    setChangePasswordError("field-new-password", "new-password-error-text", "New password is required.");
+    showToast("down", "Validation Error", "Please enter a new password.");
+    qs("input-new-password")?.focus();
+    return;
+  }
+
+  if (newPassword.length < 8) {
+    setChangePasswordError("field-new-password", "new-password-error-text", "Password must be at least 8 characters long.");
+    showToast("down", "Validation Error", "Password must be at least 8 characters long.");
+    qs("input-new-password")?.focus();
+    return;
+  }
+
+  if (newPassword.toLowerCase() === "admin123") {
+    setChangePasswordError("field-new-password", "new-password-error-text", "New password cannot be the default password 'admin123'.");
+    showToast("down", "Validation Error", "New password cannot be the default password 'admin123'.");
+    qs("input-new-password")?.focus();
+    return;
+  }
+
+  if (oldPassword === newPassword) {
+    setChangePasswordError("field-new-password", "new-password-error-text", "New password must be different from current password.");
+    showToast("down", "Validation Error", "New password must be different from current password.");
+    qs("input-new-password")?.focus();
+    return;
+  }
+
+  if (newPassword !== confirmPassword) {
+    setChangePasswordError("field-confirm-password", "confirm-password-error-text", "New password and confirmation do not match.");
+    showToast("down", "Validation Error", "New password and confirmation do not match.");
+    qs("input-confirm-password")?.focus();
+    return;
+  }
+
+  const btn = qs("modal-change-password-submit");
+  btn.disabled = true;
+  btn.innerHTML = `<i data-lucide="loader-2" style="width:16px;height:16px;animation:spin 0.7s linear infinite;"></i> Updating\u2026`;
+  if (window.lucide) lucide.createIcons();
+
+  try {
+    const res = await api("/api/auth/change-password", {
+      method: "POST",
+      body: JSON.stringify({
+        old_password: oldPassword,
+        new_password: newPassword
+      })
+    });
+    const wasForced = isForceChangePassword;
+    isForceChangePassword = false;
+    sessionStorage.removeItem("must_change_password");
+    qs("modal-change-password")?.classList.add("hidden");
+    clearChangePasswordErrors();
+    showToast("up", "Password Updated", wasForced ? "Password changed successfully! You may now access the dashboard." : (res.message || "Your password has been changed successfully."));
+  } catch (err) {
+    const errMsg = err.message || "Failed to update password.";
+    if (errMsg.toLowerCase().includes("old password") || errMsg.toLowerCase().includes("current password") || errMsg.toLowerCase().includes("incorrect")) {
+      setChangePasswordError("field-old-password", "old-password-error-text", "Current password is incorrect.");
+      showToast("down", "Authentication Error", "Current password is incorrect.");
+      qs("input-old-password")?.focus();
+    } else if (errMsg.toLowerCase().includes("different")) {
+      setChangePasswordError("field-new-password", "new-password-error-text", errMsg);
+      showToast("down", "Validation Error", errMsg);
+      qs("input-new-password")?.focus();
+    } else if (errMsg.toLowerCase().includes("admin123") || errMsg.toLowerCase().includes("default")) {
+      setChangePasswordError("field-new-password", "new-password-error-text", errMsg);
+      showToast("down", "Validation Error", errMsg);
+      qs("input-new-password")?.focus();
+    } else {
+      showToast("down", "Error", errMsg);
+    }
+  } finally {
+    btn.disabled = false;
+    btn.textContent = "Update Password";
+  }
+}
+
+/* --------------------------------------------------- Table render -- */
+
+const STATUS_GROUP_ORDER = ["DOWN", "DEGRADED", "UP", "PAUSED", "UNKNOWN"];
+const GROUP_LABELS = { DOWN: "Down", DEGRADED: "Degraded", UP: "Up", PAUSED: "Paused", UNKNOWN: "Unknown" };
+
+/** Collapsible group state persists in localStorage, shared across the
+ * Dashboard and Targets views (both render the same grouped table) and
+ * survives a full page refresh, per the collapsible spec. */
+function isGroupCollapsed(key) {
+  return localStorage.getItem(`pingon_collapse_group_${key}`) === "1";
+}
+function setGroupCollapsed(key, collapsed) {
+  localStorage.setItem(`pingon_collapse_group_${key}`, collapsed ? "1" : "0");
+}
+
+function targetRowHtml(t) {
+  const isPaused = (t.status || "").toUpperCase() === "PAUSED";
+  const pauseResumeBtn = isPaused
+    ? `<button class="btn-icon btn-resume" title="Resume" data-id="${t.id}"><i data-lucide="play"></i></button>`
+    : `<button class="btn-icon btn-pause" title="Pause" data-id="${t.id}"><i data-lucide="pause"></i></button>`;
+  
+  const adminActions = currentUser.role === "administrator" ? `
+          <button class="btn-icon btn-edit" title="Edit" data-id="${t.id}"><i data-lucide="edit"></i></button>
+          ${pauseResumeBtn}
+          <button class="btn-icon icon-btn-danger btn-delete" title="Delete" data-id="${t.id}"><i data-lucide="trash-2"></i></button>
+  ` : "";
+
+  return `
+    <tr data-id="${t.id}">
+      <td class="row-name">${escapeHtml(t.name)}</td>
+      <td class="mono" style="color: var(--text-secondary);">${escapeHtml(t.host)}</td>
+      <td class="mono">${isPaused ? "--" : fmtLatency(t.latency_avg)}</td>
+      <td class="mono">${isPaused ? "--" : fmtLoss(t.packet_loss)}</td>
+      <td class="mono" style="color: var(--text-secondary);">${fmtRelativeTime(t.last_check)}</td>
+      <td>
+        <div class="row-actions">
+          <button class="btn-icon btn-ping" title="Ping Now" data-id="${t.id}"><i data-lucide="zap"></i></button>
+          ${adminActions}
+        </div>
+      </td>
+    </tr>`;
+}
+
+function renderTable(containerEl, targets) {
+  if (!targets.length) {
+    containerEl.innerHTML = "";
+    const tpl = qs("tpl-empty-state").content.cloneNode(true);
+    containerEl.appendChild(tpl);
+    containerEl.querySelector(".btn-add-target-empty")?.addEventListener("click", () => openTargetModal(null));
+    if (window.lucide) lucide.createIcons();
+    return;
+  }
+
+  // Group by status — this is the "monitoring group" collapsible level
+  // (see collapsible spec): grouping by status is what this app's data
+  // model actually supports, giving the same "many targets -> compact
+  // view" benefit without inventing an unrelated grouping feature.
+  const groups = {};
+  targets.forEach((t) => {
+    const key = (t.status || "UNKNOWN").toUpperCase();
+    (groups[key] = groups[key] || []).push(t);
+  });
+  const orderedKeys = [
+    ...STATUS_GROUP_ORDER.filter((k) => groups[k]),
+    ...Object.keys(groups).filter((k) => !STATUS_GROUP_ORDER.includes(k)),
+  ];
+
+  containerEl.innerHTML = orderedKeys
+    .map((key) => {
+      const rows = groups[key];
+      const collapsed = isGroupCollapsed(key);
+      const meta = STATUS_META[key] || { cls: "badge-unknown", icon: "circle-dashed" };
+      return `
+      <div class="target-group ${collapsed ? "collapsed" : ""}" data-group="${key}">
+        <button type="button" class="target-group-header">
+          <i data-lucide="${collapsed ? "chevron-right" : "chevron-down"}" class="group-chevron"></i>
+          <span class="badge ${meta.cls}"><i data-lucide="${meta.icon}"></i>${GROUP_LABELS[key] || key}</span>
+          <span class="group-count">${rows.length}</span>
+        </button>
+        <div class="target-group-body">
+          <table class="data-table">
+            <thead>
+              <tr>
+                <th>Name</th><th>Host</th><th>Latency</th>
+                <th>Packet Loss</th><th>Last Check</th><th style="text-align:right;">Actions</th>
+              </tr>
+            </thead>
+            <tbody>${rows.map(targetRowHtml).join("")}</tbody>
+          </table>
+        </div>
+      </div>`;
+    })
+    .join("");
+
+  containerEl.querySelectorAll(".target-group-header").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const group = btn.closest(".target-group");
+      const key = group.dataset.group;
+      const nowCollapsed = !group.classList.contains("collapsed");
+      group.classList.toggle("collapsed", nowCollapsed);
+      setGroupCollapsed(key, nowCollapsed);
+      const chevron = btn.querySelector(".group-chevron");
+      chevron.setAttribute("data-lucide", nowCollapsed ? "chevron-right" : "chevron-down");
+      if (window.lucide) lucide.createIcons();
+    });
+  });
+
+  containerEl.querySelectorAll("tbody tr").forEach((tr) => {
+    tr.addEventListener("click", (e) => {
+      if (e.target.closest("button")) return;
+      openDetail(Number(tr.dataset.id));
+    });
+  });
+  containerEl.querySelectorAll(".btn-ping").forEach((btn) =>
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      pingNowFromRow(Number(btn.dataset.id), btn);
+    })
+  );
+  containerEl.querySelectorAll(".btn-edit").forEach((btn) =>
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const target = state.targets.find((t) => t.id === Number(btn.dataset.id));
+      if (target) openTargetModal(target);
+    })
+  );
+  containerEl.querySelectorAll(".btn-delete").forEach((btn) =>
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const target = state.targets.find((t) => t.id === Number(btn.dataset.id));
+      if (target) openDeleteConfirm(target);
+    })
+  );
+  containerEl.querySelectorAll(".btn-pause").forEach((btn) =>
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const target = state.targets.find((t) => t.id === Number(btn.dataset.id));
+      if (target) openPauseConfirm(target);
+    })
+  );
+  containerEl.querySelectorAll(".btn-resume").forEach((btn) =>
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const target = state.targets.find((t) => t.id === Number(btn.dataset.id));
+      if (target) openResumeConfirm(target);
+    })
+  );
+
+  if (window.lucide) lucide.createIcons();
+}
+
+function renderSkeletonTable(containerEl) {
+  const skeletonRow = () => `
+    <tr>
+      <td><div class="skeleton" style="height:14px;width:110px;">a</div></td>
+      <td><div class="skeleton" style="height:14px;width:90px;">a</div></td>
+      <td><div class="skeleton" style="height:14px;width:60px;">a</div></td>
+      <td><div class="skeleton" style="height:14px;width:40px;">a</div></td>
+      <td><div class="skeleton" style="height:14px;width:70px;">a</div></td>
+      <td></td>
+    </tr>`;
+  containerEl.innerHTML = `
+    <table class="data-table">
+      <thead><tr><th>Name</th><th>Host</th><th>Latency</th><th>Packet Loss</th><th>Last Check</th><th></th></tr></thead>
+      <tbody>${skeletonRow()}${skeletonRow()}${skeletonRow()}</tbody>
+    </table>`;
+}
+
+/* ------------------------------------------------ Dashboard fetch -- */
+
+async function fetchDashboard({ showSkeleton = false } = {}) {
+  if (showSkeleton) {
+    renderSkeletonTable(qs("dashboard-table-wrap"));
+    renderSkeletonTable(qs("targets-table-wrap"));
+  }
+  try {
+    const data = await api("/api/dashboard");
+    state.targets = data.targets;
+
+    qs("stat-total").textContent = data.total;
+    qs("stat-up").textContent = data.up;
+    qs("stat-degraded").textContent = data.degraded;
+    qs("stat-down").textContent = data.down;
+    qs("stat-paused").textContent = data.paused ?? 0;
+    qs("last-update").textContent = fmtClock(data.last_update);
+
+    renderTable(qs("dashboard-table-wrap"), data.targets);
+    renderTable(qs("targets-table-wrap"), data.targets);
+
+    checkStatusChanges(data.targets);
+    setSystemStatus(true);
+  } catch (err) {
+    setSystemStatus(false);
+  }
+}
+
+function checkStatusChanges(targets) {
+  targets.forEach((t) => {
+    if (!t.status_changed || !t.last_check) return;
+    if (state.toastedCheckpoints[t.id] === t.last_check) return;
+    state.toastedCheckpoints[t.id] = t.last_check;
+
+    if (t.status === "DOWN") {
+      showToast("down", "Target Down", `${t.name} is unreachable`);
+    } else if (t.status === "UP") {
+      showToast("up", "Target Recovered", `${t.name} is UP again`);
+    }
+  });
+}
+
+async function checkHealth() {
+  try {
+    await api("/api/health");
+    setSystemStatus(true);
+  } catch (_) {
+    setSystemStatus(false);
+  }
+}
+
+function setSystemStatus(online) {
+  const el = qs("system-status");
+  const text = qs("system-status-text");
+  el.classList.toggle("offline", !online);
+  text.textContent = online ? "System Operational" : "Backend Offline";
+}
+
+/* --------------------------------------------------- Ping Now ------ */
+
+async function pingNowFromRow(targetId, btnEl) {
+  const target = state.targets.find((t) => t.id === targetId);
+  if (!target) return;
+
+  const originalHtml = btnEl.innerHTML;
+  btnEl.disabled = true;
+  btnEl.innerHTML = `<i data-lucide="loader-2" style="width:16px;height:16px;animation:spin 0.7s linear infinite;"></i>`;
+  if (window.lucide) lucide.createIcons();
+
+  try {
+    const result = await api("/api/ping", {
+      method: "POST",
+      body: JSON.stringify({
+        host: target.host,
+        count: target.count,
+        timeout: target.timeout,
+        interval: 0.2,
+      }),
+    });
+    showToast(
+      result.status === "DOWN" ? "down" : "up",
+      "Ping complete",
+      `${target.name}: ${result.status} \u00b7 ${fmtLatency(result.latency.avg)}`
+    );
+  } catch (err) {
+    showToast("down", "Ping failed", err.message);
+  } finally {
+    btnEl.disabled = false;
+    btnEl.innerHTML = originalHtml;
+    if (window.lucide) lucide.createIcons();
+  }
+}
+
+/* ------------------------------------------------- Target modal ---- */
+
+function openTargetModal(target) {
+  const modal = qs("modal-target");
+  const isEdit = !!target;
+  qs("modal-target-title").textContent = isEdit ? "Edit Target" : "Add Target";
+  qs("modal-target-submit").textContent = isEdit ? "Save Changes" : "Add Target";
+  qs("input-name").value = target?.name || "";
+  qs("input-host").value = target?.host || "";
+  qs("input-count").value = target?.count ?? 4;
+  qs("input-timeout").value = target?.timeout ?? 1;
+  qs("input-interval").value = target?.interval ?? 10;
+  
+  // Telegram Notification settings
+  const tgEnabled = Boolean(target?.telegram_enabled);
+  qs("input-telegram-enabled").checked = tgEnabled;
+  qs("input-telegram-name").value = target?.telegram_name || "";
+  qs("input-telegram-token").value = target?.telegram_token || "";
+  qs("input-telegram-chat").value = target?.telegram_chat_id || "";
+  qs("input-telegram-notify-down").checked = target ? Boolean(target.telegram_notify_down) : true;
+  qs("input-telegram-notify-up").checked = target ? Boolean(target.telegram_notify_up) : true;
+  
+  const tgCustom = Boolean(target?.telegram_custom);
+  qs("input-telegram-custom").checked = tgCustom;
+  qs("input-telegram-tpl-down").value = target?.telegram_template_down || "";
+  qs("input-telegram-tpl-up").value = target?.telegram_template_up || "";
+  
+  qs("telegram-fields").classList.toggle("hidden", !tgEnabled);
+  qs("telegram-custom-fields").classList.toggle("hidden", !tgCustom);
+  
+  qs("form-target").dataset.editId = target?.id ?? "";
+  clearFieldErrors();
+  modal.classList.remove("hidden");
+  if (window.lucide) lucide.createIcons();
+  qs("input-name").focus();
+}
+
+function closeTargetModal() {
+  qs("modal-target").classList.add("hidden");
+}
+
+function clearFieldErrors() {
+  qs("field-name").classList.remove("has-error");
+  qs("field-host").classList.remove("has-error");
+  qs("field-telegram-name")?.classList.remove("has-error");
+  qs("field-telegram-token")?.classList.remove("has-error");
+  qs("field-telegram-chat")?.classList.remove("has-error");
+}
+
+async function testTelegram() {
+  clearFieldErrors();
+  const token = qs("input-telegram-token").value.trim();
+  const chatId = qs("input-telegram-chat").value.trim();
+  const name = qs("input-telegram-name").value.trim() || "PingOn";
+
+  let hasErr = false;
+  if (!token) {
+    qs("field-telegram-token").classList.add("has-error");
+    hasErr = true;
+  }
+  if (!chatId) {
+    qs("field-telegram-chat").classList.add("has-error");
+    hasErr = true;
+  }
+  if (hasErr) {
+    showToast("down", "✕ Validation Error", "Bot Token and Chat ID are required to test Telegram.");
+    return;
+  }
+
+  const btn = qs("btn-test-telegram");
+  const originalHtml = btn.innerHTML;
+  btn.disabled = true;
+  btn.innerHTML = `<i data-lucide="loader-2" style="width:16px;height:16px;animation:spin 0.7s linear infinite;"></i> Sending\u2026`;
+  if (window.lucide) lucide.createIcons();
+
+  try {
+    await api("/api/targets/test-telegram", {
+      method: "POST",
+      body: JSON.stringify({ token, chat_id: chatId, name }),
+    });
+    showToast("up", "✓ Telegram notification sent successfully", "Test message received by Telegram bot.");
+  } catch (err) {
+    showToast("down", "✕ Failed to send Telegram notification", err.message || "Could not reach Telegram API.");
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = originalHtml;
+    if (window.lucide) lucide.createIcons();
+  }
+}
+
+async function submitTargetForm(e) {
+  e.preventDefault();
+  clearFieldErrors();
+
+  const name = qs("input-name").value.trim();
+  const host = qs("input-host").value.trim();
+  let hasError = false;
+  if (!name) {
+    qs("field-name").classList.add("has-error");
+    hasError = true;
+  }
+  if (!host) {
+    qs("field-host").classList.add("has-error");
+    qs("host-error-text").textContent = "Host is required.";
+    hasError = true;
+  }
+
+  const telegramEnabled = qs("input-telegram-enabled").checked;
+  if (telegramEnabled) {
+    const tgName = qs("input-telegram-name").value.trim();
+    const tgToken = qs("input-telegram-token").value.trim();
+    const tgChat = qs("input-telegram-chat").value.trim();
+    if (!tgName) {
+      qs("field-telegram-name").classList.add("has-error");
+      hasError = true;
+    }
+    if (!tgToken) {
+      qs("field-telegram-token").classList.add("has-error");
+      hasError = true;
+    }
+    if (!tgChat) {
+      qs("field-telegram-chat").classList.add("has-error");
+      hasError = true;
+    }
+  }
+
+  if (hasError) return;
+
+  const payload = {
+    name,
+    host,
+    count: Number(qs("input-count").value) || 4,
+    timeout: Number(qs("input-timeout").value) || 1,
+    interval: Number(qs("input-interval").value) || 10,
+    enabled: true,
+    telegram_enabled: telegramEnabled,
+    telegram_name: telegramEnabled ? qs("input-telegram-name").value.trim() : null,
+    telegram_token: telegramEnabled ? qs("input-telegram-token").value.trim() : null,
+    telegram_chat_id: telegramEnabled ? qs("input-telegram-chat").value.trim() : null,
+    telegram_notify_down: qs("input-telegram-notify-down").checked,
+    telegram_notify_up: qs("input-telegram-notify-up").checked,
+    telegram_custom: qs("input-telegram-custom").checked,
+    telegram_template_down: qs("input-telegram-tpl-down").value || null,
+    telegram_template_up: qs("input-telegram-tpl-up").value || null,
+  };
+
+  const editId = qs("form-target").dataset.editId;
+  const submitBtn = qs("modal-target-submit");
+  const originalText = submitBtn.textContent;
+  submitBtn.disabled = true;
+  submitBtn.textContent = editId ? "Saving\u2026" : "Adding\u2026";
+
+  try {
+    if (editId) {
+      await api(`/api/targets/${editId}`, { method: "PUT", body: JSON.stringify(payload) });
+    } else {
+      await api("/api/targets", { method: "POST", body: JSON.stringify(payload) });
+    }
+    closeTargetModal();
+    await fetchDashboard();
+  } catch (err) {
+    if (err.status === 422) {
+      qs("field-host").classList.add("has-error");
+      qs("host-error-text").textContent = err.message;
+    } else {
+      showToast("down", "Could not save target", err.message);
+    }
+  } finally {
+    submitBtn.disabled = false;
+    submitBtn.textContent = originalText;
+  }
+}
+
+/* ------------------------------------------------- Confirm modal --- */
+// Shared by Delete / Pause / Resume — all three are a state-changing
+// action that needs an "are you sure" step (never browser confirm(),
+// this reuses the app's own modal component per the UX spec).
+
+let pendingConfirmAction = null;
+
+function openConfirmModal({ title, body, confirmLabel, confirmClass, target, onConfirm }) {
+  qs("confirm-modal-title").textContent = title;
+  qs("confirm-modal-body").textContent = body;
+  qs("confirm-target-name").textContent = target.name;
+  qs("confirm-target-host").textContent = target.host;
+
+  const btn = qs("modal-confirm-action");
+  btn.textContent = confirmLabel;
+  btn.className = `btn ${confirmClass}`;
+
+  pendingConfirmAction = onConfirm;
+  qs("modal-confirm").classList.remove("hidden");
+}
+
+function closeConfirmModal() {
+  qs("modal-confirm").classList.add("hidden");
+  pendingConfirmAction = null;
+}
+
+async function runConfirmAction() {
+  if (!pendingConfirmAction) return;
+  const btn = qs("modal-confirm-action");
+  const originalText = btn.textContent;
+  btn.disabled = true;
+  btn.textContent = "Please wait\u2026";
+  try {
+    await pendingConfirmAction();
+    closeConfirmModal();
+  } catch (err) {
+    showToast("down", "Action failed", err.message);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = originalText;
+  }
+}
+
+function openDeleteConfirm(target) {
+  openConfirmModal({
+    title: "Delete Target?",
+    body: "This target will be removed from monitoring.",
+    confirmLabel: "Delete",
+    confirmClass: "btn-danger",
+    target,
+    onConfirm: async () => {
+      await api(`/api/targets/${target.id}`, { method: "DELETE" });
+      if (state.view === "detail" && state.detailTargetId === target.id) {
+        switchView("targets");
+      }
+      await fetchDashboard();
+    },
+  });
+}
+
+function openPauseConfirm(target) {
+  openConfirmModal({
+    title: "Pause Monitoring?",
+    body: `Monitoring "${target.name}" will stop being checked until you resume it.`,
+    confirmLabel: "Pause",
+    confirmClass: "btn-warning",
+    target,
+    onConfirm: async () => {
+      try {
+        await api(`/api/targets/${target.id}/pause`, { method: "POST" });
+        showToast("up", "✓ Monitoring paused", `${target.name} is now paused.`);
+        await fetchDashboard();
+        if (state.view === "detail" && state.detailTargetId === target.id) {
+          await openDetail(target.id);
+        }
+      } catch (err) {
+        showToast("down", "✕ Failed to pause monitoring", String(err));
+      }
+    },
+  });
+}
+
+function openResumeConfirm(target) {
+  openConfirmModal({
+    title: "Resume Monitoring?",
+    body: `Monitoring "${target.name}" will start checking again.`,
+    confirmLabel: "Resume",
+    confirmClass: "btn-primary",
+    target,
+    onConfirm: async () => {
+      try {
+        await api(`/api/targets/${target.id}/resume`, { method: "POST" });
+        showToast("up", "✓ Monitoring resumed", `${target.name} monitoring has been resumed.`);
+        await fetchDashboard();
+        if (state.view === "detail" && state.detailTargetId === target.id) {
+          await openDetail(target.id);
+        }
+      } catch (err) {
+        showToast("down", "✕ Failed to resume monitoring", String(err));
+      }
+    },
+  });
+}
+
+/* --------------------------------------------------- Detail view --- */
+
+async function openDetail(targetId) {
+  state.detailTargetId = targetId;
+  switchView("detail");
+
+  qs("detail-name").textContent = "Loading\u2026";
+  qs("detail-host").textContent = "";
+  qs("detail-current-latency").textContent = "--";
+  qs("detail-packet-loss").textContent = "--";
+  qs("detail-min-avg-max").textContent = "--";
+  qs("detail-last-check").textContent = "--";
+
+  try {
+    const target = await api(`/api/targets/${targetId}`);
+    const liveState = state.targets.find((t) => t.id === targetId) || {};
+
+    qs("detail-name").textContent = target.name;
+    qs("detail-host").textContent = target.host;
+    document.getElementById("detail-status-badge").outerHTML = statusBadgeWithId(liveState.status);
+    qs("detail-current-latency").textContent = fmtLatency(liveState.latency_avg);
+    qs("detail-packet-loss").textContent = fmtLoss(liveState.packet_loss);
+    qs("detail-min-avg-max").textContent =
+      `${fmtLatency(liveState.latency_min)} / ${fmtLatency(liveState.latency_avg)} / ${fmtLatency(liveState.latency_max)}`;
+    qs("detail-last-check").textContent = fmtRelativeTime(liveState.last_check);
+    renderDetailActions(target, liveState);
+    renderHeartbeatCurrentStatus(liveState.status);
+    if (window.lucide) lucide.createIcons();
+
+    await loadDetailHistory(targetId);
+  } catch (err) {
+    showToast("down", "Could not load target", err.message);
+  }
+}
+
+function renderDetailActions(target, liveState) {
+  const isPaused = (liveState.status || "").toUpperCase() === "PAUSED";
+  const pauseResumeBtn = isPaused
+    ? `<button class="btn btn-primary" id="detail-btn-resume"><i data-lucide="play"></i> Resume</button>`
+    : `<button class="btn btn-warning" id="detail-btn-pause"><i data-lucide="pause"></i> Pause</button>`;
+
+  qs("detail-actions").innerHTML = `
+    <button class="btn btn-ghost" id="detail-btn-edit"><i data-lucide="edit"></i> Edit</button>
+    ${pauseResumeBtn}
+    <button class="btn btn-danger" id="detail-btn-delete"><i data-lucide="trash-2"></i> Delete</button>
+  `;
+
+  qs("detail-btn-edit").addEventListener("click", () => openTargetModal(target));
+  qs("detail-btn-delete").addEventListener("click", () => openDeleteConfirm(target));
+  const pauseBtn = document.getElementById("detail-btn-pause");
+  const resumeBtn = document.getElementById("detail-btn-resume");
+  pauseBtn?.addEventListener("click", () => openPauseConfirm(target));
+  resumeBtn?.addEventListener("click", () => openResumeConfirm(target));
+}
+
+function statusBadgeWithId(status) {
+  const s = (status || "UNKNOWN").toUpperCase();
+  const meta = STATUS_META[s] || { cls: "badge-unknown", icon: "circle-dashed" };
+  return `<span class="badge ${meta.cls}" id="detail-status-badge"><i data-lucide="${meta.icon}"></i>${s}</span>`;
+}
+
+async function loadDetailHistory(targetId) {
+  try {
+    const data = await api(`/api/targets/${targetId}/history?hours=24`);
+    renderCharts(data.heartbeat);
+    renderHeartbeat(data);
+  } catch (err) {
+    console.warn("history load failed", err);
+  }
+}
+
+/* --------------------------------------------------- Heartbeat ---- */
+const HEARTBEAT_WINDOW_HOURS = 24;
+
+function fmtDuration(ms) {
+  if (!Number.isFinite(ms) || ms < 0) return "--";
+  const totalSeconds = Math.round(ms / 1000);
+  const days = Math.floor(totalSeconds / 86400);
+  const hours = Math.floor((totalSeconds % 86400) / 3600);
+  const minutes = Math.floor((totalSeconds % 3600) / 60);
+  const seconds = totalSeconds % 60;
+
+  if (days > 0) return `${days}d ${hours}h`;
+  if (hours > 0) return `${hours}h ${minutes}m`;
+  if (minutes > 0) return `${minutes}m ${seconds}s`;
+  return `${seconds}s`;
+}
+
+const HEARTBEAT_CURRENT_META = {
+  UP: { cls: "is-up", text: "Operational" },
+  DOWN: { cls: "is-down", text: "Downtime detected" },
+  DEGRADED: { cls: "is-degraded", text: "Degraded performance" },
+  PAUSED: { cls: "is-paused", text: "Monitoring paused" },
+};
+
+function renderHeartbeatCurrentStatus(status) {
+  const el = qs("heartbeat-current");
+  const textEl = qs("heartbeat-current-text");
+  if (!el || !textEl) return;
+  const s = (status || "").toUpperCase();
+  const meta = HEARTBEAT_CURRENT_META[s];
+  el.classList.remove("is-up", "is-down", "is-degraded", "is-paused");
+  if (meta) {
+    el.classList.add(meta.cls);
+    textEl.textContent = meta.text;
+  } else {
+    textEl.textContent = "No data yet";
+  }
+}
+
+function renderHeartbeat(data) {
+  const barEl = qs("heartbeat-bar");
+  if (!barEl) return;
+
+  const summary = data.summary;
+  const history = data.heartbeat;
+
+  barEl.innerHTML = history
+    .map((h) => {
+      let kindClass = `kind-nodata`;
+      const s = (h.status || "").toUpperCase();
+      if (s === "UP") kindClass = "kind-up";
+      else if (s === "DOWN" || s === "ERROR" || s === "UNKNOWN") kindClass = "kind-down";
+      else if (s === "DEGRADED") kindClass = "kind-degraded";
+      else if (s === "PAUSED") kindClass = "kind-paused";
+      
+      return `<div class="heartbeat-segment ${kindClass}" data-ts="${h.timestamp}" data-status="${h.status}" data-latency="${h.latency_avg}" data-loss="${h.packet_loss}"></div>`;
+    })
+    .join("");
+
+  barEl.querySelectorAll(".heartbeat-segment").forEach((el) => {
+    if (el.dataset.status === "NODATA") return;
+    el.addEventListener("mouseenter", (e) => showHeartbeatTooltip(e, el));
+    el.addEventListener("mousemove", (e) => positionHeartbeatTooltip(e));
+    el.addEventListener("mouseleave", hideHeartbeatTooltip);
+  });
+
+  qs("hb-availability").textContent = summary.availability === null ? "--" : `${summary.availability.toFixed(2)}%`;
+  qs("hb-uptime").textContent = fmtDuration(summary.uptime);
+  qs("hb-downtime").textContent = fmtDuration(summary.downtime);
+  qs("hb-incidents").textContent = String(summary.incidents);
+  
+  if (history.length > 0) {
+    const startTs = new Date(history[0].timestamp).getTime();
+    qs("heartbeat-range-start").textContent = fmtAxisTime(startTs / 1000);
+  } else {
+    qs("heartbeat-range-start").textContent = "--";
+  }
+}
+
+function showHeartbeatTooltip(e, segmentEl) {
+  const tooltip = qs("heartbeat-tooltip");
+  const status = segmentEl.dataset.status;
+  const ts = new Date(segmentEl.dataset.ts);
+  const latency = segmentEl.dataset.latency;
+  const loss = segmentEl.dataset.loss;
+
+  qs("tooltip-status").textContent = status || "--";
+  
+  // Format time like: 06 Sep 2026, 06:42:00
+  const optsDate = { day: '2-digit', month: 'short', year: 'numeric' };
+  const optsTime = { hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: false };
+  const formattedDate = ts.toLocaleDateString('en-GB', optsDate);
+  const formattedTime = ts.toLocaleTimeString('en-GB', optsTime);
+  qs("tooltip-time").textContent = `${formattedDate}, ${formattedTime}`;
+
+  if (status.toUpperCase() === "PAUSED") {
+    qs("tooltip-latency").textContent = "—";
+    qs("tooltip-loss").textContent = "—";
+  } else {
+    qs("tooltip-latency").textContent = (!latency || latency === "null") ? "—" : `${parseFloat(latency).toFixed(1)} ms`;
+    qs("tooltip-loss").textContent = (!loss || loss === "null") ? "—" : `${parseFloat(loss).toFixed(1)}%`;
+  }
+
+  tooltip.classList.remove("hidden");
+  positionHeartbeatTooltip(e);
+}
+
+function positionHeartbeatTooltip(e) {
+  const tooltip = qs("heartbeat-tooltip");
+  if (tooltip.classList.contains("hidden")) return;
+  const margin = 14;
+  let left = e.clientX + margin;
+  let top = e.clientY + margin;
+
+  const rect = tooltip.getBoundingClientRect();
+  if (left + rect.width > window.innerWidth - 8) left = e.clientX - rect.width - margin;
+  if (top + rect.height > window.innerHeight - 8) top = e.clientY - rect.height - margin;
+
+  tooltip.style.left = `${Math.max(8, left)}px`;
+  tooltip.style.top = `${Math.max(8, top)}px`;
+}
+
+function hideHeartbeatTooltip() {
+  qs("heartbeat-tooltip").classList.add("hidden");
+}
+
+/* --------------------------------------------------------------- */
+
+function renderCharts(history) {
+  const times = history.map((h) => Math.floor(new Date(h.timestamp).getTime() / 1000));
+  const latencies = history.map((h) => (h.latency_avg === null ? null : h.latency_avg));
+  const losses = history.map((h) => Math.max(0, Math.min(100, h.packet_loss)));
+
+  destroyCharts();
+
+  const latencyEl = qs("chart-latency");
+  const lossEl = qs("chart-loss");
+
+  if (!history.length) {
+    latencyEl.innerHTML = `<p class="label" style="padding-top: 80px; text-align:center;">No history yet for this target.</p>`;
+    lossEl.innerHTML = `<p class="label" style="padding-top: 60px; text-align:center;">No history yet.</p>`;
+    return;
+  }
+  latencyEl.innerHTML = "";
+  lossEl.innerHTML = "";
+
+  if (typeof uPlot === "undefined") return;
+
+  // Chart canvas colors can't be reached by CSS at all, so theme
+  // support here means reading the current CSS variable values
+  // directly at render time (these are re-created each time the
+  // detail view loads history, so they naturally pick up a theme
+  // change on the next render — see the theme toggle handler, which
+  // also forces an immediate re-render if a chart is on screen).
+  const rootStyles = getComputedStyle(document.documentElement);
+  const axisStroke = rootStyles.getPropertyValue("--chart-axis-stroke").trim() || "#a7acc4";
+  const gridStroke = rootStyles.getPropertyValue("--chart-grid-stroke").trim() || "rgba(255,255,255,0.06)";
+
+  const commonAxisOpts = {
+    stroke: axisStroke,
+    grid: { stroke: gridStroke },
+    ticks: { stroke: gridStroke },
+    // Axis tick labels (timestamps / numeric values) are drawn on
+    // <canvas>, so they can't be styled with CSS — uPlot's own `font`
+    // option is the only way to apply IBM Plex Mono to them.
+    font: "11px 'IBM Plex Mono', ui-monospace, monospace",
+    labelFont: "11px 'IBM Plex Sans', sans-serif",
+  };
+
+  state.uplotLatency = new uPlot(
+    {
+      width: latencyEl.clientWidth || 600,
+      height: 220,
+      series: [
+        { value: (u, ts) => fmtLegendTime(ts) },
+        {
+          label: "Latency (ms)",
+          stroke: "#4C6AFF",
+          width: 2,
+          points: { show: false },
+          spanGaps: false,
+        },
+      ],
+      axes: [
+        { ...commonAxisOpts, values: (u, vals) => vals.map((v) => fmtAxisTime(v)) },
+        { ...commonAxisOpts, label: "Latency (ms)" },
+      ],
+      scales: { x: { time: true } },
+      cursor: { drag: { x: false, y: false } },
+    },
+    [times, latencies],
+    latencyEl
+  );
+
+  state.uplotLoss = new uPlot(
+    {
+      width: lossEl.clientWidth || 600,
+      height: 180,
+      series: [
+        { value: (u, ts) => fmtLegendTime(ts) },
+        {
+          label: "Packet Loss (%)",
+          stroke: "#9E2A3A",
+          width: 2,
+          points: { show: false },
+        },
+      ],
+      axes: [
+        { ...commonAxisOpts, values: (u, vals) => vals.map((v) => fmtAxisTime(v)) },
+        { ...commonAxisOpts, label: "Loss (%)" },
+      ],
+      scales: { x: { time: true }, y: { range: [0, 100] } },
+      cursor: { drag: { x: false, y: false } },
+    },
+    [times, losses],
+    lossEl
+  );
+}
+
+function destroyCharts() {
+  if (state.uplotLatency) {
+    state.uplotLatency.destroy();
+    state.uplotLatency = null;
+  }
+  if (state.uplotLoss) {
+    state.uplotLoss.destroy();
+    state.uplotLoss = null;
+  }
+}
+
+/* --------------------------------------------------- Auto refresh -- */
+
+function setupAutoRefresh() {
+  if (state.refreshTimer) clearInterval(state.refreshTimer);
+  if (state.refreshMs <= 0) return;
+  state.refreshTimer = setInterval(() => {
+    fetchDashboard();
+    if (state.view === "detail" && state.detailTargetId) {
+      loadDetailHistory(state.detailTargetId);
+    }
+    checkHealth();
+  }, state.refreshMs);
+}
+
+/* --------------------------------------------------- Mobile nav ---- */
+
+function openMobileNav() {
+  qs("sidebar").classList.remove("hidden");
+  qs("sidebar").classList.add("flex");
+  qs("mobile-nav-overlay").classList.remove("hidden");
+}
+function closeMobileNav() {
+  if (window.innerWidth < 768) {
+    qs("sidebar").classList.add("hidden");
+    qs("sidebar").classList.remove("flex");
+  }
+  qs("mobile-nav-overlay").classList.add("hidden");
+}
+
+/* -------------------------------------------------------- Init ----- */
+
+function bindEvents() {
+  document.querySelectorAll(".nav-item[data-view]").forEach((el) => {
+    el.addEventListener("click", () => switchView(el.dataset.view));
+  });
+
+  qs("mobile-menu-btn").addEventListener("click", openMobileNav);
+  qs("mobile-nav-overlay").addEventListener("click", closeMobileNav);
+
+  qs("btn-add-target-2").addEventListener("click", () => openTargetModal(null));
+  qs("btn-back-to-targets").addEventListener("click", () => switchView("targets"));
+
+  qs("modal-target-close").addEventListener("click", closeTargetModal);
+  qs("modal-target-cancel").addEventListener("click", closeTargetModal);
+  qs("form-target").addEventListener("submit", submitTargetForm);
+
+  qs("modal-confirm-cancel").addEventListener("click", closeConfirmModal);
+  qs("modal-confirm-action").addEventListener("click", runConfirmAction);
+
+  qs("refresh-select").addEventListener("change", (e) => {
+    state.refreshMs = Number(e.target.value);
+    setupAutoRefresh();
+  });
+
+  qs("input-telegram-enabled").addEventListener("change", (e) => {
+    qs("telegram-fields").classList.toggle("hidden", !e.target.checked);
+  });
+
+  qs("input-telegram-custom").addEventListener("change", (e) => {
+    qs("telegram-custom-fields").classList.toggle("hidden", !e.target.checked);
+  });
+
+  qs("btn-test-telegram").addEventListener("click", testTelegram);
+
+  const btnAddUser = qs("btn-add-user");
+  if (btnAddUser) btnAddUser.addEventListener("click", () => openUserModal());
+  
+  const modalUserCancel = qs("modal-user-cancel");
+  if (modalUserCancel) modalUserCancel.addEventListener("click", closeUserModal);
+  
+  const formUser = qs("form-user");
+  if (formUser) formUser.addEventListener("submit", submitUserForm);
+
+  const btnCreateBackup = qs("btn-create-backup");
+  if (btnCreateBackup) btnCreateBackup.addEventListener("click", createBackupNow);
+
+  const btnUploadBackup = qs("btn-upload-backup");
+  const inputUploadBackup = qs("input-upload-backup");
+  if (btnUploadBackup && inputUploadBackup) {
+    btnUploadBackup.addEventListener("click", () => inputUploadBackup.click());
+    inputUploadBackup.addEventListener("change", handleBackupUpload);
+  }
+  
+  const btnTogglePassword = qs("btn-toggle-password");
+  if (btnTogglePassword) {
+    btnTogglePassword.addEventListener("click", () => {
+      const input = qs("input-password");
+      if (input.type === "password") {
+        input.type = "text";
+        btnTogglePassword.innerHTML = `<i data-lucide="eye-off" style="width: 16px; height: 16px;"></i>`;
+      } else {
+        input.type = "password";
+        btnTogglePassword.innerHTML = `<i data-lucide="eye" style="width: 16px; height: 16px;"></i>`;
+      }
+      lucide.createIcons();
+    });
+  }
+
+  // Change Password Modal events
+  const btnOpenChangePw = qs("btn-open-change-password");
+  if (btnOpenChangePw) btnOpenChangePw.addEventListener("click", openChangePasswordModal);
+
+  const modalChangePwClose = qs("modal-change-password-close");
+  if (modalChangePwClose) modalChangePwClose.addEventListener("click", closeChangePasswordModal);
+
+  const modalChangePwCancel = qs("modal-change-password-cancel");
+  if (modalChangePwCancel) modalChangePwCancel.addEventListener("click", closeChangePasswordModal);
+
+  const formChangePw = qs("form-change-password");
+  if (formChangePw) formChangePw.addEventListener("submit", submitChangePasswordForm);
+
+  // Clear change-password field errors on input
+  qs("input-old-password")?.addEventListener("input", () => {
+    qs("field-old-password")?.classList.remove("has-error");
+  });
+  qs("input-new-password")?.addEventListener("input", () => {
+    qs("field-new-password")?.classList.remove("has-error");
+  });
+  qs("input-confirm-password")?.addEventListener("input", () => {
+    qs("field-confirm-password")?.classList.remove("has-error");
+  });
+
+  // Generic eye toggle for password inputs with .btn-pw-toggle
+  document.querySelectorAll(".btn-pw-toggle").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      const targetId = btn.getAttribute("data-target");
+      const input = qs(targetId);
+      if (!input) return;
+      if (input.type === "password") {
+        input.type = "text";
+        btn.innerHTML = `<i data-lucide="eye-off" style="width: 16px; height: 16px;"></i>`;
+      } else {
+        input.type = "password";
+        btn.innerHTML = `<i data-lucide="eye" style="width: 16px; height: 16px;"></i>`;
+      }
+      if (window.lucide) lucide.createIcons();
+    });
+  });
+
+  [qs("modal-target"), qs("modal-confirm"), qs("modal-user"), qs("modal-change-password")].forEach((overlay) => {
+    if (overlay) {
+      overlay.addEventListener("click", (e) => {
+        if (overlay.id === "modal-change-password" && isForceChangePassword) return;
+        if (e.target === overlay) overlay.classList.add("hidden");
+      });
+    }
+  });
+
+  // ESC key handler for modals (blocked for forced change-password)
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") {
+      if (isForceChangePassword) return;
+      [qs("modal-target"), qs("modal-confirm"), qs("modal-user"), qs("modal-change-password")].forEach((overlay) => {
+        if (overlay && !overlay.classList.contains("hidden")) {
+          overlay.classList.add("hidden");
+        }
+      });
+    }
+  });
+}
+
+function injectSpinKeyframes() {
+  const style = document.createElement("style");
+  style.textContent = "@keyframes spin { to { transform: rotate(360deg); } }";
+  document.head.appendChild(style);
+}
+
+/** Generic collapsible wiring for static sections (chart cards, modal
+ * "Advanced Settings"). Persists to localStorage so state survives a
+ * refresh/view switch, same as the grouped-table collapse state. */
+function initCollapsible(rootEl, storageKey, defaultCollapsed = false) {
+  if (!rootEl) return;
+  const header = rootEl.querySelector("[data-collapsible-toggle]");
+  const chevron = header?.querySelector(".group-chevron");
+  if (!header) return;
+
+  const stored = localStorage.getItem(storageKey);
+  const collapsed = stored !== null ? stored === "1" : defaultCollapsed;
+  rootEl.classList.toggle("collapsed", collapsed);
+  if (chevron) chevron.setAttribute("data-lucide", collapsed ? "chevron-right" : "chevron-down");
+
+  header.addEventListener("click", () => {
+    const nowCollapsed = !rootEl.classList.contains("collapsed");
+    rootEl.classList.toggle("collapsed", nowCollapsed);
+    localStorage.setItem(storageKey, nowCollapsed ? "1" : "0");
+    if (chevron) {
+      chevron.setAttribute("data-lucide", nowCollapsed ? "chevron-right" : "chevron-down");
+      if (window.lucide) lucide.createIcons();
+    }
+  });
+}
+
+/** Sidebar collapse (desktop). Separate from the mobile nav
+ * overlay toggle — collapsing narrows the sidebar to icon-only and
+ * persists across refreshes, same pattern as the other collapsibles. */
+function applySidebarCollapsed(collapsed) {
+  const sidebar = qs("sidebar");
+  const toggleBtn = qs("sidebar-collapse-toggle");
+  if (!sidebar || !toggleBtn) return;
+  sidebar.classList.toggle("collapsed", collapsed);
+  toggleBtn.innerHTML = `<i data-lucide="${collapsed ? "panel-left-open" : "panel-left-close"}"></i>`;
+  toggleBtn.title = collapsed ? "Expand sidebar" : "Collapse sidebar";
+  if (window.lucide) lucide.createIcons();
+}
+
+function initSidebarCollapse() {
+  const toggleBtn = qs("sidebar-collapse-toggle");
+  if (!toggleBtn) return;
+  const collapsed = localStorage.getItem("pingon_sidebar_collapsed") === "1";
+  applySidebarCollapsed(collapsed);
+
+  toggleBtn.addEventListener("click", () => {
+    const nowCollapsed = !qs("sidebar").classList.contains("collapsed");
+    applySidebarCollapsed(nowCollapsed);
+    localStorage.setItem("pingon_sidebar_collapsed", nowCollapsed ? "1" : "0");
+  });
+}
+
+/** Light/dark theme toggle. The `data-theme` attribute is already set
+ * before first paint by the tiny inline script at the top of <head>;
+ * this just syncs the toggle button's icon to match and wires up the
+ * click handler. */
+function applyTheme(theme) {
+  document.documentElement.setAttribute("data-theme", theme);
+  const btn = qs("theme-toggle");
+  if (btn) {
+    btn.innerHTML = `<i data-lucide="${theme === "light" ? "moon" : "sun"}"></i>`;
+    btn.title = theme === "light" ? "Switch to dark mode" : "Switch to light mode";
+    if (window.lucide) lucide.createIcons();
+  }
+}
+
+function initTheme() {
+  const current = document.documentElement.getAttribute("data-theme") === "light" ? "light" : "dark";
+  applyTheme(current);
+
+  qs("theme-toggle")?.addEventListener("click", () => {
+    const now = document.documentElement.getAttribute("data-theme") === "light" ? "light" : "dark";
+    const next = now === "light" ? "dark" : "light";
+    applyTheme(next);
+    localStorage.setItem("pingon_theme", next);
+    // Chart colors are read from CSS variables at render time (canvas
+    // can't react to a CSS variable change on its own), so force a
+    // redraw if a chart happens to be on screen right now.
+    if (state.view === "detail" && state.detailTargetId) {
+      loadDetailHistory(state.detailTargetId);
+    }
+  });
+}
+
+async function initAuth() {
+  try {
+    const user = await api("/api/auth/me");
+    qs("auth-username").textContent = user.username;
+    qs("auth-role").textContent = user.role;
+    
+    if (user.role === "administrator") {
+      document.querySelectorAll(".admin-only").forEach(el => el.classList.remove("hidden"));
+    }
+
+    if (user.must_change_password || sessionStorage.getItem("must_change_password") === "1") {
+      openChangePasswordModal(true);
+    }
+  } catch (err) {
+    // api() wrapper handles the 401 redirect
+  }
+}
+
+async function init() {
+  injectSpinKeyframes();
+  bindEvents();
+  initTheme();
+  initSidebarCollapse();
+  initCollapsible(qs("section-heartbeat"), "pingon_collapse_heartbeat", false);
+  initCollapsible(qs("section-latency-chart"), "pingon_collapse_latency_chart", false);
+  initCollapsible(qs("section-loss-chart"), "pingon_collapse_loss_chart", false);
+  initCollapsible(qs("section-advanced-settings"), "pingon_collapse_advanced_settings", false);
+  if (window.lucide) lucide.createIcons();
+
+  await initAuth();
+  await fetchDashboard({ showSkeleton: true });
+  await checkHealth();
+  setupAutoRefresh();
+}
+
+document.addEventListener("DOMContentLoaded", init);
+
+</script>
+</body>
+</html>

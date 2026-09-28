@@ -1,0 +1,422 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>PingOn | Terminal Login</title>
+
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;600;700&display=swap" rel="stylesheet">
+
+  <style>
+    *, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+
+    :root {
+      --term-bg: rgba(12, 13, 20, 0.72);
+      --term-border: rgba(255, 255, 255, 0.08);
+      --term-shadow: 0 24px 80px rgba(0, 0, 0, 0.6), 0 0 1px rgba(255,255,255,0.05);
+      --term-radius: 12px;
+
+      --dot-close: #ff5f57;
+      --dot-min: #febc2e;
+      --dot-max: #28c840;
+
+      --text-bright: #e8eaed;
+      --text-dim: #6b7280;
+      --text-accent: #7aa2f7;
+      --text-green: #9ece6a;
+      --text-red: #f7768e;
+      --text-yellow: #e0af68;
+      --text-cyan: #7dcfff;
+      --text-prompt: #a9b1d6;
+
+      --font-mono: 'JetBrains Mono', 'SF Mono', 'Cascadia Code', 'Fira Code', monospace;
+      --caret-color: #7aa2f7;
+    }
+
+    body {
+      font-family: var(--font-mono);
+      background: #06060e;
+      background-image:
+        radial-gradient(ellipse at 25% 30%, rgba(30, 40, 90, 0.25), transparent 60%),
+        radial-gradient(ellipse at 75% 70%, rgba(60, 20, 40, 0.15), transparent 60%);
+      background-attachment: fixed;
+      min-height: 100vh;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      color: var(--text-bright);
+      -webkit-font-smoothing: antialiased;
+      -moz-osx-font-smoothing: grayscale;
+    }
+
+    /* ── Terminal Window ─────────────────────────────── */
+    .terminal {
+      width: 100%;
+      max-width: 640px;
+      background: var(--term-bg);
+      backdrop-filter: blur(40px) saturate(1.3);
+      -webkit-backdrop-filter: blur(40px) saturate(1.3);
+      border: 1px solid var(--term-border);
+      border-radius: var(--term-radius);
+      box-shadow: var(--term-shadow);
+      overflow: hidden;
+      position: relative;
+    }
+
+    /* Subtle rim light on top edge */
+    .terminal::before {
+      content: '';
+      position: absolute;
+      top: 0; left: 20px; right: 20px;
+      height: 1px;
+      background: linear-gradient(90deg, transparent, rgba(122, 162, 247, 0.2), transparent);
+    }
+
+    /* ── Title Bar ───────────────────────────────────── */
+    .titlebar {
+      display: flex;
+      align-items: center;
+      padding: 14px 16px;
+      border-bottom: 1px solid rgba(255,255,255,0.04);
+      user-select: none;
+      position: relative;
+    }
+
+    .traffic-lights {
+      display: flex;
+      gap: 8px;
+    }
+
+    .traffic-lights span {
+      width: 12px;
+      height: 12px;
+      border-radius: 50%;
+      display: block;
+    }
+    .traffic-lights .close  { background: var(--dot-close); }
+    .traffic-lights .min    { background: var(--dot-min); }
+    .traffic-lights .max    { background: var(--dot-max); }
+
+    .titlebar-text {
+      position: absolute;
+      left: 50%;
+      transform: translateX(-50%);
+      font-size: 12px;
+      font-weight: 500;
+      color: var(--text-dim);
+      letter-spacing: 0.02em;
+    }
+
+    /* ── Terminal Body ───────────────────────────────── */
+    .term-body {
+      padding: 20px 22px 28px;
+      font-size: 13.5px;
+      line-height: 1.7;
+      min-height: 320px;
+    }
+
+    .line {
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+
+    .line.hidden { display: none; }
+
+    /* Prompt styling */
+    .prompt-prefix { color: var(--text-accent); }
+    .prompt-tilde  { color: var(--text-cyan); }
+    .prompt-pct    { color: var(--text-dim); }
+
+    /* Colors */
+    .c-green  { color: var(--text-green); }
+    .c-red    { color: var(--text-red); }
+    .c-yellow { color: var(--text-yellow); }
+    .c-dim    { color: var(--text-dim); }
+    .c-cyan   { color: var(--text-cyan); }
+    .c-accent { color: var(--text-accent); }
+    .c-bright { color: var(--text-bright); }
+
+    /* Inline input */
+    .term-input {
+      background: transparent;
+      border: none;
+      outline: none;
+      color: var(--text-bright);
+      font-family: var(--font-mono);
+      font-size: 13.5px;
+      width: 50%;
+      caret-color: var(--caret-color);
+      line-height: 1.7;
+      padding: 0;
+    }
+    .term-input::placeholder { color: rgba(255,255,255,0.15); }
+
+    /* Blinking cursor */
+    .cursor {
+      display: inline-block;
+      width: 8px;
+      height: 16px;
+      background: var(--caret-color);
+      vertical-align: text-bottom;
+      animation: blink 1s step-end infinite;
+      margin-left: 2px;
+    }
+
+    @keyframes blink {
+      0%, 100% { opacity: 1; }
+      50% { opacity: 0; }
+    }
+
+    /* Typing animation for loading lines */
+    @keyframes fadeSlideIn {
+      from { opacity: 0; transform: translateX(-4px); }
+      to   { opacity: 1; transform: translateX(0); }
+    }
+    .animate-in {
+      animation: fadeSlideIn 0.25s ease-out forwards;
+    }
+
+    /* Access granted highlight */
+    .access-granted {
+      display: inline-block;
+      padding: 2px 10px;
+      background: rgba(158, 206, 106, 0.12);
+      border: 1px solid rgba(158, 206, 106, 0.25);
+      border-radius: 4px;
+      color: var(--text-green);
+      font-weight: 600;
+      letter-spacing: 0.05em;
+    }
+
+    /* Spinner dots */
+    .spinner::after {
+      content: '';
+      animation: dots 1.2s steps(4, end) infinite;
+    }
+    @keyframes dots {
+      0%   { content: ''; }
+      25%  { content: '.'; }
+      50%  { content: '..'; }
+      75%  { content: '...'; }
+      100% { content: ''; }
+    }
+
+    /* Responsive */
+    @media (max-width: 680px) {
+      .terminal { margin: 16px; max-width: calc(100vw - 32px); }
+      .term-body { padding: 16px 14px 22px; font-size: 12.5px; }
+      .term-input { font-size: 12.5px; }
+    }
+  </style>
+</head>
+<body>
+
+<div class="terminal">
+  <div class="titlebar">
+    <div class="traffic-lights">
+      <span class="close"></span>
+      <span class="min"></span>
+      <span class="max"></span>
+    </div>
+  </div>
+
+  <div class="term-body" id="term">
+    <!-- Lines are appended dynamically -->
+  </div>
+</div>
+
+<script>
+  // ── Skip if already authenticated ──
+  if (sessionStorage.getItem("access_token")) {
+    window.location.href = "/";
+  }
+
+  const term = document.getElementById("term");
+
+  // ── Helpers ──────────────────────────────────────────
+  function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
+
+  function addLine(html, cls = "") {
+    const div = document.createElement("div");
+    div.className = `line animate-in ${cls}`.trim();
+    div.innerHTML = html;
+    term.appendChild(div);
+    term.scrollTop = term.scrollHeight;
+    return div;
+  }
+
+  function promptHTML(text) {
+    return `<span class="prompt-prefix">PingOn</span> <span class="prompt-tilde">~</span> <span class="prompt-pct">%</span> <span class="c-bright">${text}</span>`;
+  }
+
+  // ── Boot Sequence ────────────────────────────────────
+  async function boot() {
+    const urlParams = new URLSearchParams(window.location.search);
+    const isLogout = urlParams.get("from") === "logout" || sessionStorage.getItem("just_logged_out") === "1";
+    sessionStorage.removeItem("just_logged_out");
+
+    if (isLogout) {
+      addLine(promptHTML("logout"));
+      await sleep(350);
+
+      // Step 1: Logout
+      const elLogout = addLine(`<span class="c-dim">Logout<span class="spinner"></span></span>`);
+      await sleep(500);
+      elLogout.innerHTML = `<span class="c-green">✓</span> <span class="c-dim">Logout...</span> <span class="c-green">success</span>`;
+      await sleep(250);
+    } else {
+      // Welcome
+      addLine(promptHTML("welcome back"));
+      await sleep(400);
+    }
+
+    // Steps: Backend & Frontend
+    const steps = [
+      { text: "Loading Backend",  delay: 450 },
+      { text: "Loading Frontend", delay: 350 },
+    ];
+
+    for (const step of steps) {
+      const el = addLine(`<span class="c-dim">${step.text}<span class="spinner"></span></span>`);
+      await sleep(step.delay);
+      el.innerHTML = `<span class="c-green">✓</span> <span class="c-dim">${step.text}...</span> <span class="c-green">done</span>`;
+      await sleep(150);
+    }
+
+    await sleep(250);
+    addLine("");
+
+    // Start login flow
+    askUsername();
+  }
+
+  // ── Username Step ────────────────────────────────────
+  function askUsername() {
+    const row = addLine("");
+    row.innerHTML = `<span class="c-yellow">Username</span><span class="c-dim">#</span> `;
+
+    const input = document.createElement("input");
+    input.type = "text";
+    input.className = "term-input";
+    input.placeholder = "enter username";
+    input.autocomplete = "username";
+    row.appendChild(input);
+    input.focus();
+
+    input.addEventListener("keydown", async (e) => {
+      if (e.key !== "Enter") return;
+      e.preventDefault();
+      const val = input.value.trim();
+      if (!val) return;
+
+      // Freeze input, show what was typed
+      input.remove();
+      row.innerHTML = `<span class="c-yellow">Username</span><span class="c-dim">#</span> <span class="c-bright">${escapeHTML(val)}</span>`;
+
+      // Try to validate via login with a dummy password first?
+      // No — just proceed to password, the API validates both together.
+      askPassword(val);
+    });
+  }
+
+  // ── Password Step ────────────────────────────────────
+  function askPassword(username) {
+    const row = addLine("");
+    row.innerHTML = `<span class="c-yellow">Password</span><span class="c-dim">#</span> `;
+
+    const input = document.createElement("input");
+    input.type = "password";
+    input.className = "term-input";
+    input.placeholder = "enter password";
+    input.autocomplete = "current-password";
+    row.appendChild(input);
+    input.focus();
+
+    input.addEventListener("keydown", async (e) => {
+      if (e.key !== "Enter") return;
+      e.preventDefault();
+      const val = input.value;
+      if (!val) return;
+
+      // Freeze input, mask
+      input.remove();
+      row.innerHTML = `<span class="c-yellow">Password</span><span class="c-dim">#</span> <span class="c-dim">${"•".repeat(val.length)}</span>`;
+
+      await sleep(200);
+
+      // Authenticate
+      const verifyLine = addLine(`<span class="c-dim">Verifying credentials<span class="spinner"></span></span>`);
+      await sleep(600);
+
+      try {
+        const formData = new URLSearchParams();
+        formData.append("username", username);
+        formData.append("password", val);
+
+        const res = await fetch("/api/auth/login", {
+          method: "POST",
+          headers: { "Content-Type": "application/x-www-form-urlencoded" },
+          body: formData.toString()
+        });
+
+        if (!res.ok) {
+          const body = await res.json().catch(() => ({}));
+          throw new Error(body.detail || "Invalid username or password");
+        }
+
+        const data = await res.json();
+
+        // Success
+        verifyLine.innerHTML = `<span class="c-green">✓</span> <span class="c-dim">Verifying credentials...</span> <span class="c-green">verified</span>`;
+        await sleep(300);
+        addLine("");
+        addLine(`<span class="access-granted">★ Access Granted</span>`);
+        await sleep(200);
+
+        // Store session
+        sessionStorage.setItem("access_token", data.access_token);
+        sessionStorage.setItem("user_role", data.user.role);
+        sessionStorage.setItem("username", data.user.username);
+        if (data.user.must_change_password) {
+          sessionStorage.setItem("must_change_password", "1");
+          addLine(`<span class="c-yellow">⚠ Default password detected. Password change required on first login.</span>`);
+          await sleep(300);
+          addLine(`<span class="c-dim">Redirecting to security setup</span><span class="spinner"></span>`);
+        } else {
+          sessionStorage.removeItem("must_change_password");
+          addLine(`<span class="c-dim">Redirecting to dashboard</span><span class="spinner"></span>`);
+        }
+
+        await sleep(1000);
+        window.location.href = "/";
+
+      } catch (err) {
+        verifyLine.innerHTML = `<span class="c-red">✗</span> <span class="c-dim">Verifying credentials...</span> <span class="c-red">failed</span>`;
+        await sleep(300);
+        addLine(`<span class="c-red">⚠ ${escapeHTML(err.message)}</span>`);
+        await sleep(200);
+        addLine("");
+
+        // Retry — ask username again
+        addLine(`<span class="c-dim">Please try again.</span>`);
+        await sleep(400);
+        addLine("");
+        askUsername();
+      }
+    });
+  }
+
+  // ── Utility ──────────────────────────────────────────
+  function escapeHTML(str) {
+    const d = document.createElement("div");
+    d.textContent = str;
+    return d.innerHTML;
+  }
+
+  // ── Kick off ─────────────────────────────────────────
+  boot();
+</script>
+</body>
+</html>
