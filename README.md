@@ -48,7 +48,19 @@ ping-monitor/
                                    # remain external CDN includes)
 ```
 
-## Run
+## 🚀 Quick Start (Docker - Recommended)
+
+```bash
+cp .env.example .env
+docker compose up -d --build
+```
+Akses dashboard di browser: **`http://localhost:8000`** (Default: `admin` / `admin123`).
+
+📖 **[Baca Panduan Lengkap Deployment dari GitHub ke Ubuntu Server (DEPLOYMENT.md)](./DEPLOYMENT.md)**
+
+---
+
+## 💻 Local Development (Without Docker)
 
 ```bash
 cd backend
