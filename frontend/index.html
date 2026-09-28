@@ -2934,13 +2934,23 @@ function renderTable(containerEl, targets) {
       const indentPx = 16 + (g.level || 0) * 18;
       const treeMarker = g.level > 0 ? `<span style="color: var(--text-muted); font-family: monospace; margin-right: 4px;">└─</span>` : '';
 
+      const hasTargets = groupTargets.length > 0;
+      let folderColor = "var(--navy-soft)";
+      if (downCount > 0) folderColor = "var(--red)";
+      else if (degradedCount > 0) folderColor = "var(--maroon)";
+      else if (upCount > 0) folderColor = "var(--green)";
+
+      const chevronHtml = hasTargets
+        ? `<i data-lucide="${collapsed ? "chevron-right" : "chevron-down"}" class="group-chevron"></i>`
+        : `<i data-lucide="minus" class="group-chevron" style="opacity: 0.25; width: 14px; height: 14px;"></i>`;
+
       return `
-      <div class="target-group-container ${collapsed ? "collapsed" : ""}" data-group-id="${g.id}">
+      <div class="target-group-container ${collapsed ? "collapsed" : ""}" data-group-id="${g.id}" data-has-targets="${hasTargets ? '1' : '0'}">
         <div class="target-group-header" style="padding-left: ${indentPx}px;">
           <div class="target-group-title">
-            <i data-lucide="${collapsed ? "chevron-right" : "chevron-down"}" class="group-chevron"></i>
+            ${chevronHtml}
             ${treeMarker}
-            <i data-lucide="folder" style="width: 16px; height: 16px; color: var(--navy-soft); flex-shrink: 0;"></i>
+            <i data-lucide="folder" style="width: 16px; height: 16px; color: ${folderColor}; flex-shrink: 0;"></i>
             <span>${escapeHtml(g.name)}</span>
             ${isRoot ? `<span class="badge" style="background: rgba(76, 106, 255, 0.15); color: #8ba4ff; border-color: rgba(76, 106, 255, 0.25); font-size: 0.68rem; padding: 1px 6px;">Default</span>` : ""}
             ${g.description ? `<span class="text-xs text-muted font-normal hidden sm:inline" style="max-width: 250px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">— ${escapeHtml(g.description)}</span>` : ""}
@@ -2951,12 +2961,8 @@ function renderTable(containerEl, targets) {
             ${adminAddBtn}
           </div>
         </div>
-        <div class="target-group-body">
-          ${groupTargets.length === 0 ? `
-            <div class="py-5 text-center text-xs text-muted" style="border-top: 1px solid var(--glass-border);">
-              No targets in this group.
-            </div>
-          ` : `
+        ${hasTargets ? `
+          <div class="target-group-body">
             <table class="data-table">
               <thead>
                 <tr>
@@ -2971,8 +2977,8 @@ function renderTable(containerEl, targets) {
               </thead>
               <tbody>${groupTargets.map(targetRowHtml).join("")}</tbody>
             </table>
-          `}
-        </div>
+          </div>
+        ` : ''}
       </div>`;
     })
     .join("");
@@ -2981,13 +2987,16 @@ function renderTable(containerEl, targets) {
     header.addEventListener("click", (e) => {
       if (e.target.closest(".btn-add-target-group")) return;
       const container = header.closest(".target-group-container");
+      if (container.dataset.hasTargets !== "1") return;
       const gid = container.dataset.groupId;
       const nowCollapsed = !container.classList.contains("collapsed");
       container.classList.toggle("collapsed", nowCollapsed);
       setGroupCollapsed(gid, nowCollapsed);
       const chevron = header.querySelector(".group-chevron");
-      chevron.setAttribute("data-lucide", nowCollapsed ? "chevron-right" : "chevron-down");
-      if (window.lucide) lucide.createIcons();
+      if (chevron) {
+        chevron.setAttribute("data-lucide", nowCollapsed ? "chevron-right" : "chevron-down");
+        if (window.lucide) lucide.createIcons();
+      }
     });
   });
 
