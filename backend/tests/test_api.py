@@ -773,5 +773,42 @@ def test_groups_crud_and_target_integration(client):
     assert res_ren_root.status_code == 400
 
 
+def test_nested_groups_hierarchy_and_cycles(client):
+    # 1. Create Parent Group
+    res_p = client.post("/api/groups", json={"name": "Bank Jateng", "description": "Bank Jateng Group"})
+    assert res_p.status_code == 201
+    parent = res_p.json()
+    assert parent["name"] == "Bank Jateng"
+    p_id = parent["id"]
+
+    # 2. Create Child Subgroup
+    res_c = client.post("/api/groups", json={"name": "KC Temanggung", "description": "Kantor Cabang", "parent_id": p_id})
+    assert res_c.status_code == 201
+    child = res_c.json()
+    assert child["name"] == "KC Temanggung"
+    assert child["parent_id"] == p_id
+    assert child["parent_name"] == "Bank Jateng"
+    assert child["level"] == 1
+    assert "Bank Jateng / KC Temanggung" in child["full_path"]
+    c_id = child["id"]
+
+    # 3. Create Grandchild Subgroup
+    res_gc = client.post("/api/groups", json={"name": "ATM Temanggung", "parent_id": c_id})
+    assert res_gc.status_code == 201
+    grandchild = res_gc.json()
+    assert grandchild["level"] == 2
+    assert "Bank Jateng / KC Temanggung / ATM Temanggung" in grandchild["full_path"]
+
+    # 4. Prevent self-parenting
+    res_cycle = client.put(f"/api/groups/{p_id}", json={"parent_id": p_id})
+    assert res_cycle.status_code == 400
+
+    # 5. Prevent parenting Root group
+    root_g = next(g for g in client.get("/api/groups").json() if g["name"].lower() == "root")
+    res_root_p = client.put(f"/api/groups/{root_g['id']}", json={"parent_id": p_id})
+    assert res_root_p.status_code == 200
+    assert res_root_p.json()["parent_id"] is None
+
+
 
 

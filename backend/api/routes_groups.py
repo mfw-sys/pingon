@@ -32,7 +32,7 @@ async def create_group(
     if existing:
         raise HTTPException(status_code=409, detail=f"Group '{payload.name}' already exists")
     
-    group = await asyncio.to_thread(db.create_group, payload.name, payload.description)
+    group = await asyncio.to_thread(db.create_group, payload.name, payload.description, payload.parent_id)
     return group
 
 
@@ -72,7 +72,10 @@ async def update_group(
         if other and other["id"] != group_id:
             raise HTTPException(status_code=409, detail=f"Group '{fields['name']}' already exists")
     
-    updated = await asyncio.to_thread(db.update_group, group_id, **fields)
+    try:
+        updated = await asyncio.to_thread(db.update_group, group_id, **fields)
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
     return updated
 
 

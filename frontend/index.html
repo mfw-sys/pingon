@@ -574,29 +574,48 @@ table.data-table {
 }
 
 /* ============================================================
-   Collapsible monitoring groups (status-grouped target table)
-   Animation is intentionally short (150-180ms) and limited to
-   max-height/opacity — subtle per the collapsible spec, no bounce
-   or scale effects.
+   PRTG-style Group Containers & Headers
    ============================================================ */
-.target-group + .target-group {
-  border-top: 1px solid var(--glass-border);
+.target-group-container {
+  border-bottom: 1px solid var(--glass-border);
+  background: transparent;
+}
+.target-group-container:last-child {
+  border-bottom: none;
 }
 .target-group-header {
   width: 100%;
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 12px 18px;
-  background: transparent;
+  justify-content: space-between;
+  gap: 12px;
+  padding: 11px 18px;
+  background: rgba(255, 255, 255, 0.025);
   border: none;
+  border-bottom: 1px solid rgba(255, 255, 255, 0.04);
   cursor: pointer;
   font-family: var(--font-sans);
   text-align: left;
   color: var(--text-primary);
+  transition: background 0.15s ease;
 }
 .target-group-header:hover {
-  background: rgba(255, 255, 255, 0.03);
+  background: rgba(255, 255, 255, 0.05);
+}
+.target-group-title {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-weight: 600;
+  font-size: 0.875rem;
+  color: var(--text-primary);
+  min-width: 0;
+}
+.target-group-stats {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-shrink: 0;
 }
 .group-chevron {
   width: 16px;
@@ -605,7 +624,6 @@ table.data-table {
   flex-shrink: 0;
 }
 .group-count {
-  margin-left: auto;
   font-family: var(--font-mono);
   font-size: 0.75rem;
   color: var(--text-muted);
@@ -616,9 +634,10 @@ table.data-table {
   overflow: hidden;
   transition: max-height 0.18s ease, opacity 0.15s ease;
 }
-.target-group.collapsed .target-group-body {
+.target-group-container.collapsed .target-group-body {
   max-height: 0;
   opacity: 0;
+  display: none;
 }
 
 /* Generic collapsible section (chart cards, modal "Advanced" group) */
@@ -1257,11 +1276,11 @@ a {
             <table class="data-table w-full">
               <thead>
                 <tr>
-                  <th style="width: 25%;">Group Name</th>
-                  <th style="width: 35%;">Description</th>
-                  <th style="width: 15%;">Targets</th>
-                  <th style="width: 15%;">Created At</th>
-                  <th style="width: 10%; text-align: right;">Actions</th>
+                  <th style="width: 32%;">Group Name (Tree)</th>
+                  <th style="width: 20%;">Parent Group</th>
+                  <th style="width: 26%;">Description</th>
+                  <th style="width: 10%;">Targets</th>
+                  <th style="width: 12%; text-align: right;">Actions</th>
                 </tr>
               </thead>
               <tbody id="table-groups">
@@ -1607,6 +1626,12 @@ a {
         <label for="input-group-name">Group Name</label>
         <input type="text" id="input-group-name" placeholder="e.g. Core Routers, Production" />
         <p class="error-text" id="group-name-error-text">Group name is required.</p>
+      </div>
+      <div class="field" id="field-group-parent">
+        <label for="input-group-parent">Parent Group <span class="text-muted" style="font-size:0.75rem; font-weight: normal;">(Optional)</span></label>
+        <select id="input-group-parent" class="w-full" style="height: 40px; border-radius: var(--radius-sm); border: 1px solid var(--glass-border); background: var(--input-bg); color: var(--text-primary); padding: 0 12px; outline: none;">
+          <!-- Options populated dynamically -->
+        </select>
       </div>
       <div class="field" id="field-group-desc">
         <label for="input-group-desc">Description <span class="text-muted" style="font-size:0.75rem; font-weight: normal;">(Optional)</span></label>
@@ -2119,12 +2144,13 @@ let groupsCache = [];
 
 async function fetchGroups() {
   const tbody = qs("table-groups");
-  if (!tbody) return;
 
   try {
     const groups = await api("/api/groups");
     groupsCache = groups;
-    renderGroupsTable(groups);
+    if (tbody) {
+      renderGroupsTable(groups);
+    }
   } catch (err) {
     showToast("down", "Failed to load groups", err.message);
   }
@@ -2141,12 +2167,20 @@ function renderGroupsTable(groups) {
 
   tbody.innerHTML = groups.map(g => {
     const isRoot = (g.name || "").toLowerCase() === "root";
-    const rootBadge = isRoot ? `<span class="badge" style="background: rgba(76, 106, 255, 0.15); color: #8ba4ff; border-color: rgba(76, 106, 255, 0.25); font-size: 0.7rem; padding: 1px 6px;">Default</span>` : "";
+    const rootBadge = isRoot ? `<span class="badge" style="background: rgba(76, 106, 255, 0.15); color: #8ba4ff; border-color: rgba(76, 106, 255, 0.25); font-size: 0.68rem; padding: 1px 6px;">Default</span>` : "";
     const dt = new Date(g.created_at);
     const dateStr = isNaN(dt.getTime()) ? "--" : dt.toLocaleDateString('en-GB', { day: '2-digit', month: 'short', year: 'numeric' });
     
+    const indentPx = 16 + (g.level || 0) * 20;
+    const treeMarker = g.level > 0 ? `<span style="color: var(--text-muted); font-family: monospace; margin-right: 4px;">└─</span>` : '';
+
+    const parentBadge = g.parent_name
+      ? `<span class="badge" style="background: rgba(255, 255, 255, 0.05); color: var(--text-secondary); font-size: 0.75rem;"><i data-lucide="folder" style="width:11px;height:11px;"></i>${escapeHtml(g.parent_name)}</span>`
+      : `<span class="text-xs text-muted">— (Top Level)</span>`;
+
     const adminActions = currentUser.role === "administrator" ? `
       <div class="flex items-center justify-end gap-1">
+        <button class="btn-icon" title="Add Subgroup under ${escapeHtml(g.name)}" onclick="openGroupModal(null, ${g.id})"><i data-lucide="folder-plus"></i></button>
         <button class="btn-icon" title="Edit Group" onclick="openGroupModal(${g.id})"><i data-lucide="edit-2"></i></button>
         <button class="btn-icon icon-btn-danger" title="${isRoot ? 'Cannot delete default Root group' : 'Delete Group'}" onclick="deleteGroup(${g.id})" ${isRoot ? 'disabled' : ''}><i data-lucide="trash-2"></i></button>
       </div>
@@ -2154,16 +2188,17 @@ function renderGroupsTable(groups) {
 
     return `
       <tr>
-        <td>
+        <td style="padding-left: ${indentPx}px;">
           <div class="font-medium flex items-center gap-2">
-            <i data-lucide="folder" style="width: 16px; height: 16px; color: var(--navy-soft);"></i>
+            ${treeMarker}
+            <i data-lucide="folder" style="width: 16px; height: 16px; color: var(--navy-soft); flex-shrink: 0;"></i>
             <span class="row-name">${escapeHtml(g.name)}</span>
             ${rootBadge}
           </div>
         </td>
+        <td>${parentBadge}</td>
         <td><span class="text-sm text-secondary">${escapeHtml(g.description || "—")}</span></td>
-        <td><span class="badge" style="background: rgba(255, 255, 255, 0.05); color: var(--text-primary); font-family: var(--font-mono);">${g.target_count} target${g.target_count === 1 ? '' : 's'}</span></td>
-        <td><span class="text-sm text-muted">${dateStr}</span></td>
+        <td><span class="badge" style="background: rgba(255, 255, 255, 0.05); color: var(--text-primary); font-family: var(--font-mono); font-size: 0.75rem;">${g.target_count} target${g.target_count === 1 ? '' : 's'}</span></td>
         <td class="text-right">${adminActions}</td>
       </tr>
     `;
@@ -2172,7 +2207,42 @@ function renderGroupsTable(groups) {
   if (window.lucide) lucide.createIcons();
 }
 
-function openGroupModal(groupId = null) {
+function populateGroupParentSelect(currentGroupId = null, selectedParentId = null) {
+  const select = qs("input-group-parent");
+  if (!select) return;
+
+  // Find all descendant IDs of currentGroupId to prevent circular hierarchy
+  const descendantIds = new Set();
+  if (currentGroupId) {
+    descendantIds.add(currentGroupId);
+    let added = true;
+    while (added) {
+      added = false;
+      for (const g of groupsCache) {
+        if (g.parent_id && descendantIds.has(g.parent_id) && !descendantIds.has(g.id)) {
+          descendantIds.add(g.id);
+          added = true;
+        }
+      }
+    }
+  }
+
+  const validParents = groupsCache.filter(g => !descendantIds.has(g.id));
+
+  select.innerHTML = `
+    <option value="">None (Top Level)</option>
+    ${validParents.map(g => {
+      const isRoot = (g.name || "").toLowerCase() === "root";
+      const isSelected = selectedParentId !== null && selectedParentId !== undefined
+        ? (g.id === selectedParentId)
+        : (isRoot && !selectedParentId);
+      const indent = g.level > 0 ? "— ".repeat(g.level) : "";
+      return `<option value="${g.id}" ${isSelected ? 'selected' : ''}>${indent}${escapeHtml(g.name)}${isRoot ? ' (Default Root)' : ''}</option>`;
+    }).join("")}
+  `;
+}
+
+function openGroupModal(groupId = null, defaultParentId = null) {
   const modal = qs("modal-group");
   const isEdit = !!groupId;
   qs("modal-group-title").textContent = isEdit ? "Edit Group" : "Add Group";
@@ -2184,19 +2254,35 @@ function openGroupModal(groupId = null) {
 
   if (groupId) {
     const existing = groupsCache.find(g => g.id === groupId);
+    const isRoot = existing && (existing.name || "").toLowerCase() === "root";
     if (existing) {
       qs("input-group-name").value = existing.name;
       qs("input-group-desc").value = existing.description || "";
-      qs("input-group-name").disabled = existing.name.toLowerCase() === "root";
+      qs("input-group-name").disabled = isRoot;
+      populateGroupParentSelect(groupId, existing.parent_id);
+      if (qs("field-group-parent")) {
+        qs("field-group-parent").style.display = isRoot ? "none" : "block";
+      }
     } else {
       api(`/api/groups/${groupId}`).then(g => {
+        const isRootFetched = (g.name || "").toLowerCase() === "root";
         qs("input-group-name").value = g.name;
         qs("input-group-desc").value = g.description || "";
-        qs("input-group-name").disabled = g.name.toLowerCase() === "root";
+        qs("input-group-name").disabled = isRootFetched;
+        populateGroupParentSelect(groupId, g.parent_id);
+        if (qs("field-group-parent")) {
+          qs("field-group-parent").style.display = isRootFetched ? "none" : "block";
+        }
       }).catch(err => showToast("down", "Error", err.message));
     }
   } else {
     qs("input-group-name").disabled = false;
+    if (qs("field-group-parent")) {
+      qs("field-group-parent").style.display = "block";
+    }
+    const rootG = groupsCache.find(g => (g.name || "").toLowerCase() === "root");
+    const parentId = defaultParentId !== null && defaultParentId !== undefined ? defaultParentId : (rootG ? rootG.id : null);
+    populateGroupParentSelect(null, parentId);
   }
 
   modal.classList.remove("hidden");
@@ -2216,6 +2302,8 @@ async function submitGroupForm(e) {
   const name = qs("input-group-name").value.trim();
   const description = qs("input-group-desc").value.trim() || null;
   const groupId = qs("input-group-id").value;
+  const parentVal = qs("input-group-parent") ? qs("input-group-parent").value : "";
+  const parent_id = parentVal ? parseInt(parentVal, 10) : null;
 
   if (!name) {
     qs("field-group-name")?.classList.add("has-error");
@@ -2231,14 +2319,14 @@ async function submitGroupForm(e) {
 
   try {
     if (groupId) {
-      const payload = { description };
+      const payload = { description, parent_id };
       if (!qs("input-group-name").disabled) {
         payload.name = name;
       }
       await api(`/api/groups/${groupId}`, { method: "PUT", body: JSON.stringify(payload) });
       showToast("up", "✓ Group Updated", `Group "${name}" has been updated.`);
     } else {
-      await api("/api/groups", { method: "POST", body: JSON.stringify({ name, description }) });
+      await api("/api/groups", { method: "POST", body: JSON.stringify({ name, description, parent_id }) });
       showToast("up", "✓ Group Created", `Group "${name}" has been created.`);
     }
     closeGroupModal();
@@ -2262,7 +2350,7 @@ async function deleteGroup(groupId) {
   const group = groupsCache.find(g => g.id === groupId);
   const name = group ? group.name : `ID ${groupId}`;
   
-  if (!confirm(`Are you sure you want to delete group "${name}"?\n\nAny targets currently in this group will be moved to the Root group.`)) {
+  if (!confirm(`Are you sure you want to delete group "${name}"?\n\nAny targets or subgroups inside this group will be safely moved to its parent or the Root group.`)) {
     return;
   }
 
@@ -2281,15 +2369,18 @@ async function populateGroupSelect(selectedGroupId = null) {
   if (!select) return;
 
   try {
-    const groups = await api("/api/groups");
-    groupsCache = groups;
-    select.innerHTML = groups.map(g => {
-      const isRoot = g.name.toLowerCase() === "root";
-      const isSelected = selectedGroupId ? (g.id === selectedGroupId) : isRoot;
-      return `<option value="${g.id}" ${isSelected ? 'selected' : ''}>${escapeHtml(g.name)}${isRoot ? ' (Default)' : ''}</option>`;
+    if (!groupsCache.length) {
+      const groups = await api("/api/groups");
+      groupsCache = groups;
+    }
+    select.innerHTML = groupsCache.map(g => {
+      const isRoot = (g.name || "").toLowerCase() === "root";
+      const isSelected = selectedGroupId !== null && selectedGroupId !== undefined ? (g.id === selectedGroupId) : isRoot;
+      const indent = g.level > 0 ? "— ".repeat(g.level) : "";
+      return `<option value="${g.id}" ${isSelected ? 'selected' : ''}>${indent}${escapeHtml(g.name)}${isRoot ? ' (Default Root)' : ''}</option>`;
     }).join("");
   } catch (err) {
-    select.innerHTML = `<option value="1" selected>Root (Default)</option>`;
+    select.innerHTML = `<option value="1" selected>Root (Default Root)</option>`;
   }
 }
 
@@ -2757,10 +2848,18 @@ function targetRowHtml(t) {
           <button class="btn-icon icon-btn-danger btn-delete" title="Delete" data-id="${t.id}"><i data-lucide="trash-2"></i></button>
   ` : "";
 
+  const key = (t.status || "UNKNOWN").toUpperCase();
+  const meta = STATUS_META[key] || { cls: "badge-unknown", icon: "circle-dashed" };
+  const label = GROUP_LABELS[key] || key;
+
   return `
     <tr data-id="${t.id}">
+      <td>
+        <span class="badge ${meta.cls}" style="font-size: 0.72rem; padding: 2px 7px;">
+          <i data-lucide="${meta.icon}"></i> ${label}
+        </span>
+      </td>
       <td class="row-name">${escapeHtml(t.name)}</td>
-      <td><span class="badge" style="background: rgba(255, 255, 255, 0.06); color: var(--text-secondary); border-color: rgba(255,255,255,0.1); font-size: 0.75rem;"><i data-lucide="folder" style="width:11px;height:11px;"></i>${escapeHtml(t.group_name || 'Root')}</span></td>
       <td class="mono" style="color: var(--text-secondary);">${escapeHtml(t.host)}</td>
       <td class="mono">${isPaused ? "--" : fmtLatency(t.latency_avg)}</td>
       <td class="mono">${isPaused ? "--" : fmtLoss(t.packet_loss)}</td>
@@ -2775,7 +2874,7 @@ function targetRowHtml(t) {
 }
 
 function renderTable(containerEl, targets) {
-  if (!targets.length) {
+  if (!targets.length && (!groupsCache || !groupsCache.length)) {
     containerEl.innerHTML = "";
     const tpl = qs("tpl-empty-state").content.cloneNode(true);
     containerEl.appendChild(tpl);
@@ -2784,57 +2883,118 @@ function renderTable(containerEl, targets) {
     return;
   }
 
-  // Group by status — this is the "monitoring group" collapsible level
-  // (see collapsible spec): grouping by status is what this app's data
-  // model actually supports, giving the same "many targets -> compact
-  // view" benefit without inventing an unrelated grouping feature.
-  const groups = {};
+  // Group targets by group_id
+  const targetMap = {};
   targets.forEach((t) => {
-    const key = (t.status || "UNKNOWN").toUpperCase();
-    (groups[key] = groups[key] || []).push(t);
+    const gid = t.group_id || 1;
+    (targetMap[gid] = targetMap[gid] || []).push(t);
   });
-  const orderedKeys = [
-    ...STATUS_GROUP_ORDER.filter((k) => groups[k]),
-    ...Object.keys(groups).filter((k) => !STATUS_GROUP_ORDER.includes(k)),
-  ];
 
-  containerEl.innerHTML = orderedKeys
-    .map((key) => {
-      const rows = groups[key];
-      const collapsed = isGroupCollapsed(key);
-      const meta = STATUS_META[key] || { cls: "badge-unknown", icon: "circle-dashed" };
-      return `
-      <div class="target-group ${collapsed ? "collapsed" : ""}" data-group="${key}">
-        <button type="button" class="target-group-header">
-          <i data-lucide="${collapsed ? "chevron-right" : "chevron-down"}" class="group-chevron"></i>
-          <span class="badge ${meta.cls}"><i data-lucide="${meta.icon}"></i>${GROUP_LABELS[key] || key}</span>
-          <span class="group-count">${rows.length}</span>
+  // Build display groups from groupsCache (hierarchically ordered)
+  let displayGroups = groupsCache.length ? [...groupsCache] : [{ id: 1, name: "Root", level: 0, full_path: "Root" }];
+
+  // If there are targets belonging to groups not in groupsCache, append them
+  const renderedIds = new Set(displayGroups.map(g => g.id));
+  Object.keys(targetMap).forEach(gidStr => {
+    const gid = Number(gidStr);
+    if (!renderedIds.has(gid)) {
+      const gname = targetMap[gid][0]?.group_name || `Group ${gid}`;
+      displayGroups.push({ id: gid, name: gname, level: 0, full_path: gname });
+    }
+  });
+
+  containerEl.innerHTML = displayGroups
+    .map((g) => {
+      const groupTargets = targetMap[g.id] || [];
+      const isRoot = (g.name || "").toLowerCase() === "root";
+      const collapsed = isGroupCollapsed(g.id);
+
+      // Status breakdown
+      let upCount = 0, downCount = 0, degradedCount = 0, pausedCount = 0;
+      groupTargets.forEach((t) => {
+        const s = (t.status || "UNKNOWN").toUpperCase();
+        if (s === "UP") upCount++;
+        else if (s === "DOWN") downCount++;
+        else if (s === "DEGRADED") degradedCount++;
+        else if (s === "PAUSED") pausedCount++;
+      });
+
+      const statusBadges = [];
+      if (downCount > 0) statusBadges.push(`<span class="badge badge-down" style="font-size:0.7rem; padding: 2px 7px;"><i data-lucide="circle-x"></i> ${downCount} DOWN</span>`);
+      if (degradedCount > 0) statusBadges.push(`<span class="badge badge-degraded" style="font-size:0.7rem; padding: 2px 7px;"><i data-lucide="alert-triangle"></i> ${degradedCount} DEGRADED</span>`);
+      if (upCount > 0) statusBadges.push(`<span class="badge badge-up" style="font-size:0.7rem; padding: 2px 7px;"><i data-lucide="circle-check"></i> ${upCount} UP</span>`);
+      if (pausedCount > 0) statusBadges.push(`<span class="badge badge-paused" style="font-size:0.7rem; padding: 2px 7px;"><i data-lucide="pause-circle"></i> ${pausedCount} PAUSED</span>`);
+
+      const adminAddBtn = currentUser.role === "administrator" ? `
+        <button class="btn btn-ghost btn-sm btn-add-target-group admin-only" data-group-id="${g.id}" title="Add target into ${escapeHtml(g.name)}" style="height: 24px; padding: 0 8px; font-size: 0.72rem; gap: 4px; border: 1px solid var(--glass-border);">
+          <i data-lucide="plus" style="width: 12px; height: 12px;"></i> Target
         </button>
+      ` : "";
+
+      const indentPx = 16 + (g.level || 0) * 18;
+      const treeMarker = g.level > 0 ? `<span style="color: var(--text-muted); font-family: monospace; margin-right: 4px;">└─</span>` : '';
+
+      return `
+      <div class="target-group-container ${collapsed ? "collapsed" : ""}" data-group-id="${g.id}">
+        <div class="target-group-header" style="padding-left: ${indentPx}px;">
+          <div class="target-group-title">
+            <i data-lucide="${collapsed ? "chevron-right" : "chevron-down"}" class="group-chevron"></i>
+            ${treeMarker}
+            <i data-lucide="folder" style="width: 16px; height: 16px; color: var(--navy-soft); flex-shrink: 0;"></i>
+            <span>${escapeHtml(g.name)}</span>
+            ${isRoot ? `<span class="badge" style="background: rgba(76, 106, 255, 0.15); color: #8ba4ff; border-color: rgba(76, 106, 255, 0.25); font-size: 0.68rem; padding: 1px 6px;">Default</span>` : ""}
+            ${g.description ? `<span class="text-xs text-muted font-normal hidden sm:inline" style="max-width: 250px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">— ${escapeHtml(g.description)}</span>` : ""}
+          </div>
+          <div class="target-group-stats">
+            ${statusBadges.join(" ")}
+            <span class="group-count">${groupTargets.length} target${groupTargets.length === 1 ? '' : 's'}</span>
+            ${adminAddBtn}
+          </div>
+        </div>
         <div class="target-group-body">
-          <table class="data-table">
-            <thead>
-              <tr>
-                <th>Name</th><th>Group</th><th>Host</th><th>Latency</th>
-                <th>Packet Loss</th><th>Last Check</th><th style="text-align:right;">Actions</th>
-              </tr>
-            </thead>
-            <tbody>${rows.map(targetRowHtml).join("")}</tbody>
-          </table>
+          ${groupTargets.length === 0 ? `
+            <div class="py-5 text-center text-xs text-muted" style="border-top: 1px solid var(--glass-border);">
+              No targets in this group.
+            </div>
+          ` : `
+            <table class="data-table">
+              <thead>
+                <tr>
+                  <th style="width: 130px;">Status</th>
+                  <th>Target Name</th>
+                  <th>Host</th>
+                  <th>Latency</th>
+                  <th>Packet Loss</th>
+                  <th>Last Check</th>
+                  <th style="text-align:right;">Actions</th>
+                </tr>
+              </thead>
+              <tbody>${groupTargets.map(targetRowHtml).join("")}</tbody>
+            </table>
+          `}
         </div>
       </div>`;
     })
     .join("");
 
-  containerEl.querySelectorAll(".target-group-header").forEach((btn) => {
-    btn.addEventListener("click", () => {
-      const group = btn.closest(".target-group");
-      const key = group.dataset.group;
-      const nowCollapsed = !group.classList.contains("collapsed");
-      group.classList.toggle("collapsed", nowCollapsed);
-      setGroupCollapsed(key, nowCollapsed);
-      const chevron = btn.querySelector(".group-chevron");
+  containerEl.querySelectorAll(".target-group-header").forEach((header) => {
+    header.addEventListener("click", (e) => {
+      if (e.target.closest(".btn-add-target-group")) return;
+      const container = header.closest(".target-group-container");
+      const gid = container.dataset.groupId;
+      const nowCollapsed = !container.classList.contains("collapsed");
+      container.classList.toggle("collapsed", nowCollapsed);
+      setGroupCollapsed(gid, nowCollapsed);
+      const chevron = header.querySelector(".group-chevron");
       chevron.setAttribute("data-lucide", nowCollapsed ? "chevron-right" : "chevron-down");
       if (window.lucide) lucide.createIcons();
+    });
+  });
+
+  containerEl.querySelectorAll(".btn-add-target-group").forEach((btn) => {
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      openTargetModal(null, Number(btn.dataset.groupId));
     });
   });
 
@@ -2844,6 +3004,7 @@ function renderTable(containerEl, targets) {
       openDetail(Number(tr.dataset.id));
     });
   });
+
   containerEl.querySelectorAll(".btn-ping").forEach((btn) =>
     btn.addEventListener("click", (e) => {
       e.stopPropagation();
@@ -2885,19 +3046,28 @@ function renderTable(containerEl, targets) {
 function renderSkeletonTable(containerEl) {
   const skeletonRow = () => `
     <tr>
-      <td><div class="skeleton" style="height:14px;width:110px;">a</div></td>
-      <td><div class="skeleton" style="height:14px;width:70px;">a</div></td>
-      <td><div class="skeleton" style="height:14px;width:90px;">a</div></td>
-      <td><div class="skeleton" style="height:14px;width:60px;">a</div></td>
-      <td><div class="skeleton" style="height:14px;width:40px;">a</div></td>
-      <td><div class="skeleton" style="height:14px;width:70px;">a</div></td>
+      <td><div class="skeleton" style="height:20px;width:70px;border-radius:12px;"></div></td>
+      <td><div class="skeleton" style="height:14px;width:130px;"></div></td>
+      <td><div class="skeleton" style="height:14px;width:90px;"></div></td>
+      <td><div class="skeleton" style="height:14px;width:60px;"></div></td>
+      <td><div class="skeleton" style="height:14px;width:40px;"></div></td>
+      <td><div class="skeleton" style="height:14px;width:70px;"></div></td>
       <td></td>
     </tr>`;
   containerEl.innerHTML = `
-    <table class="data-table">
-      <thead><tr><th>Name</th><th>Group</th><th>Host</th><th>Latency</th><th>Packet Loss</th><th>Last Check</th><th></th></tr></thead>
-      <tbody>${skeletonRow()}${skeletonRow()}${skeletonRow()}</tbody>
-    </table>`;
+    <div class="target-group-container">
+      <div class="target-group-header">
+        <div class="target-group-title">
+          <div class="skeleton" style="height:16px;width:140px;"></div>
+        </div>
+      </div>
+      <div class="target-group-body">
+        <table class="data-table">
+          <thead><tr><th>Status</th><th>Name</th><th>Host</th><th>Latency</th><th>Packet Loss</th><th>Last Check</th><th></th></tr></thead>
+          <tbody>${skeletonRow()}${skeletonRow()}${skeletonRow()}</tbody>
+        </table>
+      </div>
+    </div>`;
 }
 
 /* ------------------------------------------------ Dashboard fetch -- */
@@ -2908,6 +3078,9 @@ async function fetchDashboard({ showSkeleton = false } = {}) {
     renderSkeletonTable(qs("targets-table-wrap"));
   }
   try {
+    if (!groupsCache.length) {
+      await fetchGroups();
+    }
     const data = await api("/api/dashboard");
     state.targets = data.targets;
 
@@ -2995,7 +3168,7 @@ async function pingNowFromRow(targetId, btnEl) {
 
 /* ------------------------------------------------- Target modal ---- */
 
-function openTargetModal(target) {
+function openTargetModal(target = null, defaultGroupId = null) {
   const modal = qs("modal-target");
   const isEdit = !!target;
   qs("modal-target-title").textContent = isEdit ? "Edit Target" : "Add Target";
@@ -3006,7 +3179,7 @@ function openTargetModal(target) {
   qs("input-timeout").value = target?.timeout ?? 1;
   qs("input-interval").value = target?.interval ?? 10;
   
-  populateGroupSelect(target?.group_id);
+  populateGroupSelect(target?.group_id ?? defaultGroupId);
 
   // Telegram Notification settings
   const tgEnabled = Boolean(target?.telegram_enabled);

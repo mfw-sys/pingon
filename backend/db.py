@@ -31,7 +31,9 @@ CREATE TABLE IF NOT EXISTS groups (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
     name TEXT NOT NULL UNIQUE,
     description TEXT,
-    created_at TEXT NOT NULL
+    parent_id INTEGER DEFAULT NULL,
+    created_at TEXT NOT NULL,
+    FOREIGN KEY (parent_id) REFERENCES groups(id) ON DELETE SET NULL
 );
 
 CREATE TABLE IF NOT EXISTS targets (
@@ -133,11 +135,16 @@ def init_db() -> None:
         except sqlite3.OperationalError:
             pass
 
+        try:
+            conn.execute("ALTER TABLE groups ADD COLUMN parent_id INTEGER DEFAULT NULL")
+        except sqlite3.OperationalError:
+            pass
+
         # Ensure default Root group exists
         root_group = conn.execute("SELECT id, name FROM groups WHERE LOWER(name) = 'root'").fetchone()
         if not root_group:
             conn.execute(
-                "INSERT INTO groups (name, description, created_at) VALUES (?, ?, ?)",
+                "INSERT INTO groups (name, description, parent_id, created_at) VALUES (?, ?, NULL, ?)",
                 ("Root", "Default root group", _now_iso())
             )
             root_group = conn.execute("SELECT id, name FROM groups WHERE LOWER(name) = 'root'").fetchone()
@@ -152,17 +159,72 @@ def init_db() -> None:
 
 # --- Groups ------------------------------------------------------------
 
-def create_group(name: str, description: Optional[str] = None) -> dict[str, Any]:
+def _build_group_hierarchy(groups: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    if not groups:
+        return []
+    
+    by_id = {g["id"]: g for g in groups}
+    children_map: dict[Optional[int], list[int]] = {}
+    root_ids: list[int] = []
+
+    for g in groups:
+        pid = g.get("parent_id")
+        if pid and pid in by_id:
+            g["parent_name"] = by_id[pid]["name"]
+            children_map.setdefault(pid, []).append(g["id"])
+        else:
+            g["parent_id"] = None
+            g["parent_name"] = None
+            root_ids.append(g["id"])
+
+    def sort_ids(g_ids: list[int]) -> list[int]:
+        def key_fn(gid: int) -> tuple[int, str]:
+            name = (by_id[gid]["name"] or "").lower()
+            return (0 if name == "root" else 1, name)
+        return sorted(g_ids, key=key_fn)
+
+    ordered: list[dict[str, Any]] = []
+    visited: set[int] = set()
+
+    def traverse(gid: int, current_path: list[str], depth: int) -> None:
+        if gid in visited:
+            return
+        visited.add(gid)
+        g = by_id[gid]
+        new_path = current_path + [g["name"]]
+        g["full_path"] = " / ".join(new_path)
+        g["level"] = depth
+        ordered.append(g)
+        for child_id in sort_ids(children_map.get(gid, [])):
+            traverse(child_id, new_path, depth + 1)
+
+    for rid in sort_ids(root_ids):
+        traverse(rid, [], 0)
+
+    for g in groups:
+        if g["id"] not in visited:
+            g["full_path"] = g["name"]
+            g["level"] = 0
+            ordered.append(g)
+
+    return ordered
+
+
+def create_group(name: str, description: Optional[str] = None, parent_id: Optional[int] = None) -> dict[str, Any]:
     with get_conn() as conn:
+        # Validate parent_id if given
+        valid_pid = None
+        if parent_id is not None:
+            parent = conn.execute("SELECT id FROM groups WHERE id = ?", (parent_id,)).fetchone()
+            if parent:
+                valid_pid = parent["id"]
+        
         cur = conn.execute(
-            "INSERT INTO groups (name, description, created_at) VALUES (?, ?, ?)",
-            (name.strip(), description.strip() if description else None, _now_iso())
+            "INSERT INTO groups (name, description, parent_id, created_at) VALUES (?, ?, ?, ?)",
+            (name.strip(), description.strip() if description else None, valid_pid, _now_iso())
         )
         group_id = cur.lastrowid
-        row = conn.execute("SELECT * FROM groups WHERE id = ?", (group_id,)).fetchone()
-        res = dict(row)
-        res["target_count"] = 0
-        return res
+    return get_group(group_id) or {}
 
 
 def list_groups() -> list[dict[str, Any]]:
@@ -174,39 +236,30 @@ def list_groups() -> list[dict[str, Any]]:
             "GROUP BY g.id "
             "ORDER BY CASE WHEN LOWER(g.name) = 'root' THEN 0 ELSE 1 END, g.name ASC"
         ).fetchall()
-        return [dict(r) for r in rows]
+        groups = [dict(r) for r in rows]
+        return _build_group_hierarchy(groups)
 
 
 def get_group(group_id: int) -> Optional[dict[str, Any]]:
-    with get_conn() as conn:
-        row = conn.execute(
-            "SELECT g.*, COUNT(t.id) AS target_count "
-            "FROM groups g "
-            "LEFT JOIN targets t ON (t.group_id = g.id OR (t.group_id IS NULL AND LOWER(g.name) = 'root')) "
-            "WHERE g.id = ? "
-            "GROUP BY g.id",
-            (group_id,)
-        ).fetchone()
-        return dict(row) if row else None
+    groups = list_groups()
+    for g in groups:
+        if g["id"] == group_id:
+            return g
+    return None
 
 
 def get_group_by_name(name: str) -> Optional[dict[str, Any]]:
-    with get_conn() as conn:
-        row = conn.execute(
-            "SELECT g.*, COUNT(t.id) AS target_count "
-            "FROM groups g "
-            "LEFT JOIN targets t ON (t.group_id = g.id OR (t.group_id IS NULL AND LOWER(g.name) = 'root')) "
-            "WHERE LOWER(g.name) = LOWER(?) "
-            "GROUP BY g.id",
-            (name.strip(),)
-        ).fetchone()
-        return dict(row) if row else None
+    groups = list_groups()
+    for g in groups:
+        if g["name"].lower() == name.strip().lower():
+            return g
+    return None
 
 
 def update_group(group_id: int, **fields: Any) -> Optional[dict[str, Any]]:
     if not fields:
         return get_group(group_id)
-    allowed = {"name", "description"}
+    allowed = {"name", "description", "parent_id"}
     updates = {k: v for k, v in fields.items() if k in allowed}
     if not updates:
         return get_group(group_id)
@@ -215,12 +268,28 @@ def update_group(group_id: int, **fields: Any) -> Optional[dict[str, Any]]:
     if "description" in updates and updates["description"]:
         updates["description"] = updates["description"].strip()
     
-    set_clause = ", ".join(f"{k} = ?" for k in updates)
-    values = list(updates.values()) + [group_id]
     with get_conn() as conn:
+        group = conn.execute("SELECT * FROM groups WHERE id = ?", (group_id,)).fetchone()
+        if not group:
+            return None
+        
+        if "parent_id" in updates:
+            pid = updates["parent_id"]
+            if pid is not None:
+                if pid == group_id:
+                    raise ValueError("A group cannot be its own parent")
+                parent = conn.execute("SELECT id FROM groups WHERE id = ?", (pid,)).fetchone()
+                if not parent:
+                    updates["parent_id"] = None
+                elif group["name"].lower() == "root":
+                    updates["parent_id"] = None
+
+        set_clause = ", ".join(f"{k} = ?" for k in updates)
+        values = list(updates.values()) + [group_id]
         conn.execute(f"UPDATE groups SET {set_clause} WHERE id = ?", values)
         if "name" in updates and updates["name"]:
             conn.execute("UPDATE targets SET group_name = ? WHERE group_id = ?", (updates["name"], group_id))
+    
     return get_group(group_id)
 
 
@@ -233,6 +302,10 @@ def delete_group(group_id: int) -> bool:
         root_group = conn.execute("SELECT id, name FROM groups WHERE LOWER(name) = 'root'").fetchone()
         root_id = root_group["id"] if root_group else 1
         root_name = root_group["name"] if root_group else "Root"
+        parent_id = group["parent_id"] or root_id
+
+        # Reassign child groups to the parent group (or Root)
+        conn.execute("UPDATE groups SET parent_id = ? WHERE parent_id = ?", (parent_id, group_id))
         
         # Reassign targets to Root group
         conn.execute("UPDATE targets SET group_id = ?, group_name = ? WHERE group_id = ?", (root_id, root_name, group_id))
