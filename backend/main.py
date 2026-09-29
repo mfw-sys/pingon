@@ -27,6 +27,7 @@ from api.routes_groups import router as groups_router
 from api.routes_auth import router as auth_router
 from api.routes_users import router as users_router
 from api.routes_database import router as database_router
+from api.routes_settings import router as settings_router
 from ping.logger import configure_logging
 from services.monitor_service import monitor_service
 from services.backup_service import backup_service
@@ -34,6 +35,8 @@ from auth.password import get_password_hash, verify_password
 
 BACKEND_DIR = Path(__file__).resolve().parent
 FRONTEND_DIR = BACKEND_DIR.parent / "frontend"
+UPLOAD_DIR = BACKEND_DIR / "data" / "uploads"
+UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
 # Library logging: quiet by default (WARNING) so per-packet logs from
 # the ping engine don't spam a running server; bump to INFO for
@@ -97,9 +100,13 @@ async def strip_sd_prefix(request, call_next):
 app.include_router(auth_router)
 app.include_router(users_router)
 app.include_router(database_router)
+app.include_router(settings_router)
 app.include_router(monitor_router)
 app.include_router(targets_router)
 app.include_router(groups_router)
+
+# Serve uploaded static files
+app.mount("/uploads", StaticFiles(directory=str(UPLOAD_DIR)), name="uploads")
 
 # Serve the static frontend last so it doesn't shadow the /api routes.
 if FRONTEND_DIR.exists():

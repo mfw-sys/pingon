@@ -810,5 +810,89 @@ def test_nested_groups_hierarchy_and_cycles(client):
     assert res_root_p.json()["parent_id"] is None
 
 
+def test_settings_get_and_update(client):
+    # 1. Default settings
+    res = client.get("/api/settings")
+    assert res.status_code == 200
+    data = res.json()
+    assert data["site_name"] == "PingOn"
+    assert data["site_tagline"] == "Keep Your Network On."
+
+    # 2. Update site name & tagline
+    res = client.put("/api/settings", json={"site_name": "My Network Monitor", "site_tagline": "Monitoring 24/7"})
+    assert res.status_code == 200
+    data = res.json()
+    assert data["site_name"] == "My Network Monitor"
+    assert data["site_tagline"] == "Monitoring 24/7"
+
+    # 3. GET reflects updated values
+    res = client.get("/api/settings")
+    assert res.status_code == 200
+    assert res.json()["site_name"] == "My Network Monitor"
+
+
+def test_settings_logo_and_favicon_upload(client):
+    import io
+    from PIL import Image
+
+    # 1. Create a large test image (500x300 px) to verify resizing to max 250x100
+    img = Image.new("RGBA", (500, 300), color=(255, 0, 0, 255))
+    buf = io.BytesIO()
+    img.save(buf, format="PNG")
+    buf.seek(0)
+
+    # Upload logo
+    res = client.post(
+        "/api/settings/logo",
+        files={"file": ("large_logo.png", buf, "image/png")}
+    )
+    assert res.status_code == 200
+    data = res.json()
+    assert data["logo_url"] is not None
+    assert data["use_logo"] is True
+
+    # Verify uploaded logo dimensions on disk
+    from api.routes_settings import UPLOAD_DIR
+    filename = data["logo_url"].replace("/uploads/", "")
+    saved_img = Image.open(UPLOAD_DIR / filename)
+    w, h = saved_img.size
+    assert w <= 250
+    assert h <= 100
+
+    # 2. Create favicon test image (128x128 px) to verify resizing to exactly 32x32
+    fav = Image.new("RGBA", (128, 128), color=(0, 255, 0, 255))
+    fav_buf = io.BytesIO()
+    fav.save(fav_buf, format="PNG")
+    fav_buf.seek(0)
+
+    # Upload favicon
+    res_fav = client.post(
+        "/api/settings/favicon",
+        files={"file": ("test_favicon.png", fav_buf, "image/png")}
+    )
+    assert res_fav.status_code == 200
+    fav_data = res_fav.json()
+    assert fav_data["favicon_url"] is not None
+
+    fav_filename = fav_data["favicon_url"].replace("/uploads/", "")
+    saved_fav = Image.open(UPLOAD_DIR / fav_filename)
+    assert saved_fav.size == (32, 32)
+
+    # 3. Delete logo & delete favicon
+    del_logo = client.delete("/api/settings/logo")
+    assert del_logo.status_code == 200
+    assert del_logo.json()["logo_url"] is None
+    assert del_logo.json()["use_logo"] is False
+
+    del_fav = client.delete("/api/settings/favicon")
+    assert del_fav.status_code == 200
+    assert del_fav.json()["favicon_url"] is None
+
+    # 4. Reset settings
+    res_reset = client.post("/api/settings/reset")
+    assert res_reset.status_code == 200
+    assert res_reset.json()["site_name"] == "PingOn"
+
+
 
 

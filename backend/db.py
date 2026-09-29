@@ -87,6 +87,11 @@ CREATE TABLE IF NOT EXISTS users (
     created_at TEXT NOT NULL,
     updated_at TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS system_settings (
+    key TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);
 """
 
 
@@ -574,3 +579,75 @@ def delete_user(user_id: int) -> bool:
     with get_conn() as conn:
         cur = conn.execute("DELETE FROM users WHERE id = ?", (user_id,))
         return cur.rowcount > 0
+
+
+# --- System Settings ---------------------------------------------------
+
+DEFAULT_SETTINGS: dict[str, str] = {
+    "site_name": "PingOn",
+    "site_tagline": "Keep Your Network On.",
+    "logo_url": "",
+    "favicon_url": "",
+    "use_logo": "1",
+}
+
+
+def get_setting(key: str, default: Optional[str] = None) -> Optional[str]:
+    with get_conn() as conn:
+        row = conn.execute("SELECT value FROM system_settings WHERE key = ?", (key,)).fetchone()
+        if row is not None:
+            return row["value"]
+        return default if default is not None else DEFAULT_SETTINGS.get(key)
+
+
+def set_setting(key: str, value: str) -> None:
+    with get_conn() as conn:
+        conn.execute(
+            "INSERT INTO system_settings (key, value) VALUES (?, ?) "
+            "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            (key, value)
+        )
+
+
+def get_all_settings() -> dict[str, Any]:
+    with get_conn() as conn:
+        rows = conn.execute("SELECT key, value FROM system_settings").fetchall()
+        settings = dict(DEFAULT_SETTINGS)
+        for r in rows:
+            settings[r["key"]] = r["value"]
+        
+        return {
+            "site_name": settings.get("site_name", "PingOn"),
+            "site_tagline": settings.get("site_tagline", "Keep Your Network On."),
+            "logo_url": settings.get("logo_url") or None,
+            "favicon_url": settings.get("favicon_url") or None,
+            "use_logo": settings.get("use_logo", "1") in ("1", "true", "True", True),
+            "updated_at": settings.get("updated_at", _now_iso()),
+        }
+
+
+def update_settings(updates: dict[str, Any]) -> dict[str, Any]:
+    with get_conn() as conn:
+        for k, v in updates.items():
+            if k in DEFAULT_SETTINGS or k == "updated_at":
+                str_val = str(int(v)) if isinstance(v, bool) else ("" if v is None else str(v))
+                conn.execute(
+                    "INSERT INTO system_settings (key, value) VALUES (?, ?) "
+                    "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+                    (k, str_val)
+                )
+        conn.execute(
+            "INSERT INTO system_settings (key, value) VALUES ('updated_at', ?) "
+            "ON CONFLICT(key) DO UPDATE SET value = excluded.value",
+            (_now_iso(),)
+        )
+    return get_all_settings()
+
+
+def reset_settings() -> dict[str, Any]:
+    with get_conn() as conn:
+        conn.execute("DELETE FROM system_settings")
+        for k, v in DEFAULT_SETTINGS.items():
+            conn.execute("INSERT INTO system_settings (key, value) VALUES (?, ?)", (k, v))
+        conn.execute("INSERT INTO system_settings (key, value) VALUES ('updated_at', ?)", (_now_iso(),))
+    return get_all_settings()

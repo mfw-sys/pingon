@@ -281,3 +281,34 @@ class Token(BaseModel):
     access_token: str
     token_type: str
     user: UserOut
+
+
+# --- Settings --------------------------------------------------------------
+
+class SettingsUpdate(BaseModel):
+    site_name: Optional[str] = Field(None, min_length=1, max_length=100)
+    site_tagline: Optional[str] = Field(None, max_length=200)
+    use_logo: Optional[bool] = None
+
+    @field_validator("site_name")
+    @classmethod
+    def clean_site_name(cls, v: Optional[str]) -> Optional[str]:
+        if v is not None:
+            v = v.strip()
+            if not v:
+                raise ValueError("Site name cannot be empty")
+        return v
+
+    @field_validator("site_tagline")
+    @classmethod
+    def clean_site_tagline(cls, v: Optional[str]) -> Optional[str]:
+        return v.strip() if v is not None else None
+
+
+class SettingsOut(BaseModel):
+    site_name: str
+    site_tagline: str
+    logo_url: Optional[str] = None
+    favicon_url: Optional[str] = None
+    use_logo: bool = True
+    updated_at: Optional[str] = None

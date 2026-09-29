@@ -3,7 +3,8 @@
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>PingOn | Terminal Login</title>
+  <title id="page-title">PingOn | Terminal Login</title>
+  <link id="app-favicon" rel="icon" href="/favicon.ico">
 
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -235,6 +236,8 @@
 
   const term = document.getElementById("term");
 
+  let currentSiteName = "PingOn";
+
   // ── Helpers ──────────────────────────────────────────
   function sleep(ms) { return new Promise(r => setTimeout(r, ms)); }
 
@@ -248,11 +251,31 @@
   }
 
   function promptHTML(text) {
-    return `<span class="prompt-prefix">PingOn</span> <span class="prompt-tilde">~</span> <span class="prompt-pct">%</span> <span class="c-bright">${text}</span>`;
+    return `<span class="prompt-prefix">${escapeHTML(currentSiteName)}</span> <span class="prompt-tilde">~</span> <span class="prompt-pct">%</span> <span class="c-bright">${text}</span>`;
+  }
+
+  async function loadSiteSettings() {
+    try {
+      const res = await fetch("/api/settings");
+      if (res.ok) {
+        const data = await res.json();
+        if (data.site_name) {
+          currentSiteName = data.site_name;
+          document.title = `${currentSiteName} | Terminal Login`;
+        }
+        if (data.favicon_url) {
+          const fav = document.getElementById("app-favicon");
+          if (fav) fav.href = `${data.favicon_url}?t=${Date.now()}`;
+        }
+      }
+    } catch (e) {
+      // Fallback stays as PingOn
+    }
   }
 
   // ── Boot Sequence ────────────────────────────────────
   async function boot() {
+    await loadSiteSettings();
     const urlParams = new URLSearchParams(window.location.search);
     const isLogout = urlParams.get("from") === "logout" || sessionStorage.getItem("just_logged_out") === "1";
     const isIdleLogout = urlParams.get("from") === "idle" || sessionStorage.getItem("idle_logout") === "1";

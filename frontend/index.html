@@ -1096,6 +1096,54 @@ a {
   text-align: left;
 }
 
+/* ============================================================
+   Settings & Identity view styling
+   ============================================================ */
+.preview-checkerboard {
+  background-color: var(--solid-panel-bg);
+  background-image:
+    linear-gradient(45deg, rgba(255, 255, 255, 0.04) 25%, transparent 25%),
+    linear-gradient(-45deg, rgba(255, 255, 255, 0.04) 25%, transparent 25%),
+    linear-gradient(45deg, transparent 75%, rgba(255, 255, 255, 0.04) 75%),
+    linear-gradient(-45deg, transparent 75%, rgba(255, 255, 255, 0.04) 75%);
+  background-size: 16px 16px;
+  background-position: 0 0, 0 8px, 8px -8px, -8px 0px;
+}
+
+.upload-dropzone {
+  border: 2px dashed var(--glass-border);
+  border-radius: var(--radius-md);
+  padding: 24px;
+  text-align: center;
+  transition: all 0.2s ease;
+  background: var(--glass-surface);
+  cursor: pointer;
+}
+.upload-dropzone:hover, .upload-dropzone.dragover {
+  border-color: #4C6AFF;
+  background: rgba(76, 106, 255, 0.08);
+}
+
+.tab-mockup {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 16px;
+  background: var(--solid-panel-bg);
+  border: 1px solid var(--glass-border);
+  border-bottom: none;
+  border-radius: 8px 8px 0 0;
+  max-width: 240px;
+  box-shadow: 0 -2px 8px rgba(0,0,0,0.15);
+}
+
+.tab-mockup-bar {
+  background: rgba(0,0,0,0.25);
+  border: 1px solid var(--glass-border);
+  border-radius: var(--radius-md);
+  padding: 12px 16px 0 16px;
+}
+
 @media (max-width: 860px) {
   .metric-lg {
     font-size: 1.4rem;
@@ -1103,6 +1151,7 @@ a {
 }
 
 </style>
+<link id="app-favicon" rel="icon" href="/favicon.ico" />
 </head>
 <body>
 
@@ -1113,11 +1162,9 @@ a {
   <!-- Sidebar -->
   <aside id="sidebar" class="sidebar w-60 shrink-0 flex-col p-4 hidden md:flex fixed md:static inset-y-0 left-0 z-50">
     <div class="flex items-center justify-between px-2 py-3 mb-4" id="sidebar-brand-row">
-      <div class="flex flex-col gap-1" id="sidebar-brand">
-        <div class="flex items-center" title="PingOn">
-          <svg width="108" height="25" viewBox="0 0 92 26" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="PingOn logo">
-            <!-- dot of the "i" becomes a ping/signal origin, connected by a
-                 single line toward "g" — the brand's network-path motif. -->
+      <div class="flex flex-col gap-1 min-w-0" id="sidebar-brand">
+        <div class="flex items-center min-h-[26px]" id="brand-logo-container" title="Dashboard">
+          <svg id="default-brand-svg" width="108" height="25" viewBox="0 0 92 26" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="PingOn logo">
             <path d="M17 5 L44 3" stroke="#4C6AFF" stroke-width="2" stroke-linecap="round" />
             <circle cx="17" cy="5" r="2.6" fill="#4C6AFF" />
             <circle cx="44" cy="3" r="1.6" fill="#4C6AFF" opacity="0.55" />
@@ -1125,10 +1172,12 @@ a {
               <tspan x="0">P</tspan><tspan x="14">i</tspan><tspan x="20">n</tspan><tspan x="35">g</tspan><tspan x="49">O</tspan><tspan x="66">n</tspan>
             </text>
           </svg>
+          <span id="custom-brand-text" class="hidden text-xl font-bold tracking-tight truncate max-w-[160px]" style="font-family: var(--font-brand); color: var(--text-primary);"></span>
+          <img id="custom-brand-img" class="hidden object-contain" style="max-width: 150px; max-height: 42px;" alt="Logo" />
         </div>
-        <span class="brand-tagline">Keep Your Network On.</span>
+        <span class="brand-tagline" id="brand-tagline">Keep Your Network On.</span>
       </div>
-      <button class="btn-icon hidden md:inline-flex" id="sidebar-collapse-toggle" title="Collapse sidebar">
+      <button class="btn-icon hidden md:inline-flex shrink-0" id="sidebar-collapse-toggle" title="Collapse sidebar">
         <i data-lucide="panel-left-close"></i>
       </button>
     </div>
@@ -1153,6 +1202,10 @@ a {
       <div class="nav-item admin-only hidden" data-view="backups" title="Database Backups">
         <i data-lucide="database"></i>
         <span>Backups</span>
+      </div>
+      <div class="nav-item admin-only hidden" data-view="settings" title="Settings">
+        <i data-lucide="settings"></i>
+        <span>Settings</span>
       </div>
     </nav>
 
@@ -1487,6 +1540,206 @@ a {
               </tbody>
             </table>
           </div>
+        </div>
+      </section>
+
+      <!-- ============ SETTINGS VIEW ============ -->
+      <section id="view-settings" class="hidden">
+        <div class="glass p-6 mb-6">
+          <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-6">
+            <div>
+              <h2 class="text-lg font-semibold">Website Identity Settings</h2>
+              <p class="label mb-0">Ubah identitas website, nama website, slogan, upload logo kustom (otomatis menyesuaikan bila &gt; 250x100), dan favicon 32x32 px.</p>
+            </div>
+            <div class="flex items-center gap-2">
+              <button class="btn btn-ghost" id="btn-reset-settings" title="Kembalikan semua pengaturan ke bawaan PingOn">
+                <i data-lucide="rotate-ccw"></i> Reset to Default
+              </button>
+            </div>
+          </div>
+
+          <form id="form-website-settings" class="space-y-6" onsubmit="return false;">
+            
+            <!-- General Info Card -->
+            <div class="card p-5" style="border-color: var(--glass-border);">
+              <h3 class="text-sm font-semibold mb-4 flex items-center gap-2">
+                <i data-lucide="globe" style="width: 16px; height: 16px; color: #4C6AFF;"></i>
+                Informasi & Nama Website
+              </h3>
+              
+              <div class="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+                <div class="field mb-0">
+                  <label for="input-site-name">Nama Website <span class="text-red-400">*</span></label>
+                  <input type="text" id="input-site-name" placeholder="misal: PingOn / NOC Network Monitor" required maxlength="100" />
+                  <p class="text-xs text-muted mt-1">Nama ini akan digunakan pada judul tab browser, header/sidebar, dan halaman login.</p>
+                </div>
+
+                <div class="field mb-0">
+                  <label for="input-site-tagline">Slogan / Tagline</label>
+                  <input type="text" id="input-site-tagline" placeholder="misal: Keep Your Network On." maxlength="200" />
+                  <p class="text-xs text-muted mt-1">Teks kecil di bawah nama website pada sidebar.</p>
+                </div>
+              </div>
+
+              <div class="field mb-0">
+                <label>Mode Tampilan Identitas Sidebar</label>
+                <div class="grid grid-cols-1 sm:grid-cols-2 gap-3 mt-1.5">
+                  <label class="flex items-center gap-3 p-3 rounded-lg cursor-pointer border transition-colors" style="background: var(--input-bg); border-color: var(--glass-border);" id="label-mode-logo">
+                    <input type="radio" name="display_mode" value="logo" id="radio-mode-logo" class="accent-indigo-500" checked />
+                    <div>
+                      <div class="text-sm font-medium" style="color: var(--text-primary);">Gunakan Logo Gambar</div>
+                      <div class="text-xs" style="color: var(--text-muted);">Menampilkan file logo yang diunggah</div>
+                    </div>
+                  </label>
+
+                  <label class="flex items-center gap-3 p-3 rounded-lg cursor-pointer border transition-colors" style="background: var(--input-bg); border-color: var(--glass-border);" id="label-mode-text">
+                    <input type="radio" name="display_mode" value="text" id="radio-mode-text" class="accent-indigo-500" />
+                    <div>
+                      <div class="text-sm font-medium" style="color: var(--text-primary);">Hanya Teks Nama Website Saja</div>
+                      <div class="text-xs" style="color: var(--text-muted);">Menampilkan teks Nama Website saja</div>
+                    </div>
+                  </label>
+                </div>
+              </div>
+
+              <div class="mt-4 pt-3 border-t flex justify-end" style="border-color: var(--glass-border);">
+                <button type="button" class="btn btn-primary" id="btn-save-general-settings">
+                  <i data-lucide="check"></i> Simpan Nama & Tagline
+                </button>
+              </div>
+            </div>
+
+            <!-- Logo Section Card -->
+            <div class="card p-5" style="border-color: var(--glass-border);">
+              <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-4">
+                <div>
+                  <h3 class="text-sm font-semibold flex items-center gap-2">
+                    <i data-lucide="image" style="width: 16px; height: 16px; color: #4C6AFF;"></i>
+                    Logo Website (Maks. 250 x 100 px)
+                  </h3>
+                  <p class="text-xs text-muted mt-1">Format didukung: PNG, JPG, WEBP, SVG, GIF. Apabila dimensi melebihi 250 x 100 px, sistem akan menyesuaikan ukurannya secara otomatis.</p>
+                </div>
+                <div id="badge-logo-status" class="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium" style="background: rgba(76, 106, 255, 0.15); color: #8fa3ff;">
+                  Default Logo
+                </div>
+              </div>
+
+              <div class="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+                
+                <!-- Left: Preview -->
+                <div class="lg:col-span-5 flex flex-col gap-2">
+                  <span class="label">Live Preview Logo:</span>
+                  <div class="preview-checkerboard rounded-xl border flex flex-col items-center justify-center p-4 min-h-[140px] relative overflow-hidden" style="border-color: var(--glass-border);">
+                    <div id="settings-logo-preview-box" class="flex items-center justify-center w-full" style="max-width: 250px; max-height: 100px;">
+                      <!-- Default / uploaded logo / text -->
+                    </div>
+                  </div>
+                  <div class="flex items-center justify-between text-xs text-muted px-1">
+                    <span id="logo-dimension-info">Dimensi target: Maks 250 x 100 px</span>
+                    <span id="logo-filename-info"></span>
+                  </div>
+                </div>
+
+                <!-- Right: Upload Actions -->
+                <div class="lg:col-span-7 flex flex-col gap-3">
+                  <input type="file" id="input-upload-logo" accept="image/png,image/jpeg,image/webp,image/svg+xml,image/gif" style="display: none;" />
+                  
+                  <div class="upload-dropzone" id="dropzone-logo">
+                    <div class="flex flex-col items-center gap-2">
+                      <div class="w-10 h-10 rounded-full flex items-center justify-center" style="background: rgba(76, 106, 255, 0.12); color: #4C6AFF;">
+                        <i data-lucide="cloud-upload" style="width: 20px; height: 20px;"></i>
+                      </div>
+                      <div>
+                        <span class="text-sm font-medium" style="color: var(--text-primary);">Klik untuk memilih file logo</span>
+                        <span class="text-xs text-muted block">atau seret (drag and drop) file gambar ke sini</span>
+                      </div>
+                      <span class="text-[11px] text-muted">PNG / JPG / WEBP / SVG (Auto-resize jika &gt; 250x100)</span>
+                    </div>
+                  </div>
+
+                  <div class="flex items-center gap-2 flex-wrap">
+                    <button type="button" class="btn btn-primary flex-1" id="btn-trigger-upload-logo">
+                      <i data-lucide="upload"></i> Upload & Simpan Logo
+                    </button>
+                    <button type="button" class="btn btn-ghost text-red-400 hover:text-red-300" id="btn-delete-logo">
+                      <i data-lucide="trash-2"></i> Hapus Logo
+                    </button>
+                  </div>
+                </div>
+
+              </div>
+            </div>
+
+            <!-- Favicon Section Card -->
+            <div class="card p-5" style="border-color: var(--glass-border);">
+              <div class="flex flex-col sm:flex-row sm:items-center justify-between gap-2 mb-4">
+                <div>
+                  <h3 class="text-sm font-semibold flex items-center gap-2">
+                    <i data-lucide="bookmark" style="width: 16px; height: 16px; color: #4C6AFF;"></i>
+                    Favicon Browser (32 x 32 px)
+                  </h3>
+                  <p class="text-xs text-muted mt-1">Upload gambar untuk ikon tab browser. Gambar akan otomatis di-resize menjadi resolusi 32 x 32 px.</p>
+                </div>
+                <div id="badge-favicon-status" class="inline-flex items-center px-2.5 py-1 rounded-full text-xs font-medium" style="background: rgba(76, 106, 255, 0.15); color: #8fa3ff;">
+                  Default Favicon
+                </div>
+              </div>
+
+              <div class="grid grid-cols-1 lg:grid-cols-12 gap-6 items-start">
+                
+                <!-- Left: Favicon Preview & Simulated Browser Tab -->
+                <div class="lg:col-span-5 flex flex-col gap-3">
+                  <span class="label">Simulasi Tab Browser:</span>
+                  <div class="tab-mockup-bar">
+                    <div class="tab-mockup">
+                      <img id="simulated-tab-icon" src="/favicon.ico" alt="Favicon" class="w-4 h-4 rounded-sm object-contain" />
+                      <span id="simulated-tab-title" class="text-xs truncate font-medium" style="color: var(--text-primary);">PingOn</span>
+                      <i data-lucide="x" style="width: 12px; height: 12px; margin-left: auto; color: var(--text-muted);"></i>
+                    </div>
+                  </div>
+
+                  <div class="flex items-center gap-3 p-3 rounded-lg border" style="background: var(--input-bg); border-color: var(--glass-border);">
+                    <div class="preview-checkerboard p-2 rounded-lg border flex items-center justify-center shrink-0" style="border-color: var(--glass-border); width: 48px; height: 48px;">
+                      <img id="settings-favicon-preview-img" src="/favicon.ico" class="w-8 h-8 object-contain" alt="Favicon Preview 32x32" />
+                    </div>
+                    <div>
+                      <div class="text-xs font-medium" style="color: var(--text-primary);">Resolusi Target: 32 x 32 px</div>
+                      <div class="text-[11px] text-muted" id="favicon-filename-info">Icon tab browser standar</div>
+                    </div>
+                  </div>
+                </div>
+
+                <!-- Right: Favicon Upload Actions -->
+                <div class="lg:col-span-7 flex flex-col gap-3">
+                  <input type="file" id="input-upload-favicon" accept="image/png,image/x-icon,image/jpeg,image/webp,image/svg+xml" style="display: none;" />
+                  
+                  <div class="upload-dropzone" id="dropzone-favicon">
+                    <div class="flex flex-col items-center gap-2">
+                      <div class="w-10 h-10 rounded-full flex items-center justify-center" style="background: rgba(76, 106, 255, 0.12); color: #4C6AFF;">
+                        <i data-lucide="cloud-upload" style="width: 20px; height: 20px;"></i>
+                      </div>
+                      <div>
+                        <span class="text-sm font-medium" style="color: var(--text-primary);">Klik untuk memilih favicon</span>
+                        <span class="text-xs text-muted block">atau seret file gambar ke sini</span>
+                      </div>
+                      <span class="text-[11px] text-muted">PNG / ICO / JPG / SVG (Auto-resize ke 32x32 px)</span>
+                    </div>
+                  </div>
+
+                  <div class="flex items-center gap-2 flex-wrap">
+                    <button type="button" class="btn btn-primary flex-1" id="btn-trigger-upload-favicon">
+                      <i data-lucide="upload"></i> Upload & Simpan Favicon
+                    </button>
+                    <button type="button" class="btn btn-ghost text-red-400 hover:text-red-300" id="btn-delete-favicon">
+                      <i data-lucide="trash-2"></i> Hapus Favicon
+                    </button>
+                  </div>
+                </div>
+
+              </div>
+            </div>
+
+          </form>
         </div>
       </section>
 
@@ -2111,7 +2364,7 @@ function statusBadge(status) {
 
 function switchView(view) {
   state.view = view;
-  ["dashboard", "targets", "groups", "detail", "users", "backups"].forEach((v) => {
+  ["dashboard", "targets", "groups", "detail", "users", "backups", "settings"].forEach((v) => {
     const el = qs(`view-${v}`);
     if (el) el.classList.toggle("hidden", v !== view);
   });
@@ -2124,7 +2377,8 @@ function switchView(view) {
     groups: "Target Groups",
     detail: "Target Detail", 
     users: "User Management",
-    backups: "Database Backups" 
+    backups: "Database Backups",
+    settings: "Settings"
   };
   qs("page-title").textContent = titles[view] || "Dashboard";
   closeMobileNav();
@@ -2135,6 +2389,8 @@ function switchView(view) {
     fetchUsers();
   } else if (view === "backups") {
     fetchBackups();
+  } else if (view === "settings") {
+    fetchSettings(true);
   }
 }
 
@@ -2547,6 +2803,382 @@ async function deleteBackup(filename) {
     await fetchBackups();
   } catch (err) {
     showToast("down", "Delete Failed", err.message);
+  }
+}
+
+/* --------------------------------------------------- Website Settings ---- */
+
+let settingsCache = {
+  site_name: "PingOn",
+  site_tagline: "Keep Your Network On.",
+  logo_url: null,
+  favicon_url: null,
+  use_logo: true,
+};
+
+let selectedLogoFile = null;
+let selectedFaviconFile = null;
+
+function applyWebsiteIdentity(settings) {
+  if (!settings) return;
+  settingsCache = settings;
+
+  // 1. Update Title
+  const siteName = settings.site_name || "PingOn";
+  document.title = `${siteName}`;
+
+  // 2. Update Favicon
+  const faviconEl = qs("app-favicon");
+  if (faviconEl) {
+    if (settings.favicon_url) {
+      faviconEl.href = `${settings.favicon_url}?t=${Date.now()}`;
+    } else {
+      faviconEl.href = "/favicon.ico";
+    }
+  }
+
+  // 3. Update Sidebar Brand
+  const defaultSvg = qs("default-brand-svg");
+  const customText = qs("custom-brand-text");
+  const customImg = qs("custom-brand-img");
+  const taglineEl = qs("brand-tagline");
+
+  if (taglineEl) {
+    taglineEl.textContent = settings.site_tagline || "";
+    taglineEl.style.display = settings.site_tagline ? "block" : "none";
+  }
+
+  if (settings.use_logo && settings.logo_url) {
+    // Show custom image logo
+    if (defaultSvg) defaultSvg.classList.add("hidden");
+    if (customText) customText.classList.add("hidden");
+    if (customImg) {
+      customImg.src = `${settings.logo_url}?t=${Date.now()}`;
+      customImg.alt = siteName;
+      customImg.classList.remove("hidden");
+    }
+  } else if (settings.site_name && settings.site_name !== "PingOn") {
+    // Custom name as text
+    if (defaultSvg) defaultSvg.classList.add("hidden");
+    if (customImg) customImg.classList.add("hidden");
+    if (customText) {
+      customText.textContent = settings.site_name;
+      customText.classList.remove("hidden");
+    }
+  } else {
+    // Default PingOn SVG
+    if (customText) customText.classList.add("hidden");
+    if (customImg) customImg.classList.add("hidden");
+    if (defaultSvg) defaultSvg.classList.remove("hidden");
+  }
+}
+
+async function fetchSettings(populateForm = false) {
+  try {
+    const settings = await api("/api/settings");
+    applyWebsiteIdentity(settings);
+    if (populateForm || state.view === "settings") {
+      renderSettingsForm(settings);
+    }
+    return settings;
+  } catch (err) {
+    console.warn("Failed to fetch site settings:", err);
+  }
+}
+
+function renderSettingsForm(settings) {
+  const inputSiteName = qs("input-site-name");
+  const inputSiteTagline = qs("input-site-tagline");
+  const radioModeLogo = qs("radio-mode-logo");
+  const radioModeText = qs("radio-mode-text");
+  const badgeLogoStatus = qs("badge-logo-status");
+  const badgeFaviconStatus = qs("badge-favicon-status");
+  const logoPreviewBox = qs("settings-logo-preview-box");
+  const faviconPreviewImg = qs("settings-favicon-preview-img");
+  const simulatedTabIcon = qs("simulated-tab-icon");
+  const simulatedTabTitle = qs("simulated-tab-title");
+  const logoFilenameInfo = qs("logo-filename-info");
+  const faviconFilenameInfo = qs("favicon-filename-info");
+
+  if (inputSiteName) inputSiteName.value = settings.site_name || "PingOn";
+  if (inputSiteTagline) inputSiteTagline.value = settings.site_tagline || "";
+
+  if (settings.use_logo) {
+    if (radioModeLogo) radioModeLogo.checked = true;
+  } else {
+    if (radioModeText) radioModeText.checked = true;
+  }
+
+  // Simulated browser tab
+  if (simulatedTabTitle) simulatedTabTitle.textContent = settings.site_name || "PingOn";
+  const favUrl = settings.favicon_url ? `${settings.favicon_url}?t=${Date.now()}` : "/favicon.ico";
+  if (simulatedTabIcon) simulatedTabIcon.src = favUrl;
+  if (faviconPreviewImg) faviconPreviewImg.src = favUrl;
+
+  // Favicon status badge
+  if (badgeFaviconStatus) {
+    badgeFaviconStatus.textContent = settings.favicon_url ? "Custom Favicon Aktif" : "Default Favicon";
+    badgeFaviconStatus.style.background = settings.favicon_url ? "rgba(34, 197, 94, 0.15)" : "rgba(76, 106, 255, 0.15)";
+    badgeFaviconStatus.style.color = settings.favicon_url ? "#4ade80" : "#8fa3ff";
+  }
+  if (faviconFilenameInfo) {
+    faviconFilenameInfo.textContent = settings.favicon_url ? "Favicon kustom aktif (32x32 px)" : "Favicon default PingOn";
+  }
+
+  // Logo Preview
+  if (badgeLogoStatus) {
+    badgeLogoStatus.textContent = settings.logo_url ? "Custom Logo Aktif" : "Default Logo";
+    badgeLogoStatus.style.background = settings.logo_url ? "rgba(34, 197, 94, 0.15)" : "rgba(76, 106, 255, 0.15)";
+    badgeLogoStatus.style.color = settings.logo_url ? "#4ade80" : "#8fa3ff";
+  }
+
+  if (logoPreviewBox) {
+    if (settings.logo_url) {
+      logoPreviewBox.innerHTML = `<img src="${settings.logo_url}?t=${Date.now()}" alt="Logo Preview" style="max-width:250px; max-height:100px; object-fit:contain;" />`;
+    } else if (settings.site_name && settings.site_name !== "PingOn") {
+      logoPreviewBox.innerHTML = `<span class="text-2xl font-bold tracking-tight" style="font-family: var(--font-brand); color: var(--text-primary);">${escapeHtml(settings.site_name)}</span>`;
+    } else {
+      logoPreviewBox.innerHTML = `
+        <svg width="180" height="42" viewBox="0 0 92 26" xmlns="http://www.w3.org/2000/svg" role="img">
+          <path d="M17 5 L44 3" stroke="#4C6AFF" stroke-width="2" stroke-linecap="round" />
+          <circle cx="17" cy="5" r="2.6" fill="#4C6AFF" />
+          <circle cx="44" cy="3" r="1.6" fill="#4C6AFF" opacity="0.55" />
+          <text y="22" font-family="var(--font-brand)" font-weight="700" font-size="22" style="fill: var(--text-primary);">
+            <tspan x="0">P</tspan><tspan x="14">i</tspan><tspan x="20">n</tspan><tspan x="35">g</tspan><tspan x="49">O</tspan><tspan x="66">n</tspan>
+          </text>
+        </svg>`;
+    }
+  }
+
+  if (logoFilenameInfo) {
+    logoFilenameInfo.textContent = settings.logo_url ? "Logo tersimpan di server (maks. 250x100)" : "Belum ada file kustom";
+  }
+}
+
+async function saveGeneralSettings() {
+  const btn = qs("btn-save-general-settings");
+  const siteName = qs("input-site-name")?.value.trim();
+  const siteTagline = qs("input-site-tagline")?.value.trim();
+  const useLogo = qs("radio-mode-logo")?.checked;
+
+  if (!siteName) {
+    showToast("down", "Validasi Gagal", "Nama Website tidak boleh kosong.");
+    return;
+  }
+
+  if (btn) btn.disabled = true;
+  try {
+    const updated = await api("/api/settings", {
+      method: "PUT",
+      body: JSON.stringify({
+        site_name: siteName,
+        site_tagline: siteTagline,
+        use_logo: useLogo,
+      }),
+    });
+    applyWebsiteIdentity(updated);
+    renderSettingsForm(updated);
+    showToast("up", "✓ Pengaturan Disimpan", "Identitas website berhasil diperbarui.");
+  } catch (err) {
+    showToast("down", "✕ Gagal Menyimpan", err.message);
+  } finally {
+    if (btn) btn.disabled = false;
+  }
+}
+
+function handleLogoFileSelect(file) {
+  if (!file) return;
+  selectedLogoFile = file;
+  
+  const logoFilenameInfo = qs("logo-filename-info");
+  if (logoFilenameInfo) logoFilenameInfo.textContent = `Dipilih: ${file.name} (${(file.size / 1024).toFixed(1)} KB)`;
+
+  // Live preview chosen local image
+  const reader = new FileReader();
+  reader.onload = (e) => {
+    const logoPreviewBox = qs("settings-logo-preview-box");
+    if (logoPreviewBox) {
+      logoPreviewBox.innerHTML = `<img src="${e.target.result}" alt="Preview" style="max-width:250px; max-height:100px; object-fit:contain;" />`;
+    }
+    const badgeLogoStatus = qs("badge-logo-status");
+    if (badgeLogoStatus) {
+      badgeLogoStatus.textContent = "Preview File Baru";
+      badgeLogoStatus.style.background = "rgba(224, 175, 104, 0.2)";
+      badgeLogoStatus.style.color = "#e0af68";
+    }
+  };
+  reader.readAsDataURL(file);
+}
+
+async function handleLogoUpload() {
+  const fileInput = qs("input-upload-logo");
+  const file = (fileInput && fileInput.files && fileInput.files[0]) || selectedLogoFile;
+
+  if (!file) {
+    if (fileInput) fileInput.click();
+    return;
+  }
+
+  const btn = qs("btn-trigger-upload-logo");
+  const originalHtml = btn ? btn.innerHTML : "";
+  if (btn) {
+    btn.disabled = true;
+    btn.innerHTML = `<i data-lucide="loader-2" style="width:16px;height:16px;animation:spin 0.7s linear infinite;"></i> Memproses Logo…`;
+    if (window.lucide) lucide.createIcons();
+  }
+
+  const formData = new FormData();
+  formData.append("file", file);
+
+  try {
+    const token = getToken();
+    const headers = {};
+    if (token) headers["Authorization"] = `Bearer ${token}`;
+
+    const res = await fetch(`${state.apiBase}/api/settings/logo`, {
+      method: "POST",
+      headers,
+      body: formData,
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      throw new Error(data.detail || "Gagal mengunggah file logo.");
+    }
+
+    selectedLogoFile = null;
+    applyWebsiteIdentity(data);
+    renderSettingsForm(data);
+    showToast("up", "✓ Logo Berhasil Diperbarui", "File logo telah disimpan dan disesuaikan ukurannya (maks. 250 x 100).");
+  } catch (err) {
+    showToast("down", "✕ Gagal Upload Logo", err.message);
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.innerHTML = originalHtml;
+      if (window.lucide) lucide.createIcons();
+    }
+    if (fileInput) fileInput.value = "";
+  }
+}
+
+async function deleteLogo() {
+  if (!confirm("Apakah Anda yakin ingin menghapus logo kustom dan kembali ke teks nama website / logo default?")) {
+    return;
+  }
+
+  try {
+    const updated = await api("/api/settings/logo", { method: "DELETE" });
+    applyWebsiteIdentity(updated);
+    renderSettingsForm(updated);
+    showToast("up", "✓ Logo Dihapus", "Logo kustom telah dihapus.");
+  } catch (err) {
+    showToast("down", "✕ Gagal Menghapus Logo", err.message);
+  }
+}
+
+function handleFaviconFileSelect(file) {
+  if (!file) return;
+  selectedFaviconFile = file;
+
+  const faviconFilenameInfo = qs("favicon-filename-info");
+  if (faviconFilenameInfo) faviconFilenameInfo.textContent = `Dipilih: ${file.name} (${(file.size / 1024).toFixed(1)} KB)`;
+
+  // Live preview chosen local favicon
+  const reader = new FileReader();
+  reader.onload = (e) => {
+    const faviconPreviewImg = qs("settings-favicon-preview-img");
+    const simulatedTabIcon = qs("simulated-tab-icon");
+    if (faviconPreviewImg) faviconPreviewImg.src = e.target.result;
+    if (simulatedTabIcon) simulatedTabIcon.src = e.target.result;
+
+    const badgeFaviconStatus = qs("badge-favicon-status");
+    if (badgeFaviconStatus) {
+      badgeFaviconStatus.textContent = "Preview File Baru (32x32)";
+      badgeFaviconStatus.style.background = "rgba(224, 175, 104, 0.2)";
+      badgeFaviconStatus.style.color = "#e0af68";
+    }
+  };
+  reader.readAsDataURL(file);
+}
+
+async function handleFaviconUpload() {
+  const fileInput = qs("input-upload-favicon");
+  const file = (fileInput && fileInput.files && fileInput.files[0]) || selectedFaviconFile;
+
+  if (!file) {
+    if (fileInput) fileInput.click();
+    return;
+  }
+
+  const btn = qs("btn-trigger-upload-favicon");
+  const originalHtml = btn ? btn.innerHTML : "";
+  if (btn) {
+    btn.disabled = true;
+    btn.innerHTML = `<i data-lucide="loader-2" style="width:16px;height:16px;animation:spin 0.7s linear infinite;"></i> Memproses Favicon…`;
+    if (window.lucide) lucide.createIcons();
+  }
+
+  const formData = new FormData();
+  formData.append("file", file);
+
+  try {
+    const token = getToken();
+    const headers = {};
+    if (token) headers["Authorization"] = `Bearer ${token}`;
+
+    const res = await fetch(`${state.apiBase}/api/settings/favicon`, {
+      method: "POST",
+      headers,
+      body: formData,
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok) {
+      throw new Error(data.detail || "Gagal mengunggah file favicon.");
+    }
+
+    selectedFaviconFile = null;
+    applyWebsiteIdentity(data);
+    renderSettingsForm(data);
+    showToast("up", "✓ Favicon Berhasil Diperbarui", "Favicon telah disimpan dan disesuaikan menjadi 32x32 px.");
+  } catch (err) {
+    showToast("down", "✕ Gagal Upload Favicon", err.message);
+  } finally {
+    if (btn) {
+      btn.disabled = false;
+      btn.innerHTML = originalHtml;
+      if (window.lucide) lucide.createIcons();
+    }
+    if (fileInput) fileInput.value = "";
+  }
+}
+
+async function deleteFavicon() {
+  if (!confirm("Apakah Anda yakin ingin menghapus favicon kustom dan kembali ke default?")) {
+    return;
+  }
+
+  try {
+    const updated = await api("/api/settings/favicon", { method: "DELETE" });
+    applyWebsiteIdentity(updated);
+    renderSettingsForm(updated);
+    showToast("up", "✓ Favicon Dihapus", "Favicon telah dikembalikan ke default.");
+  } catch (err) {
+    showToast("down", "✕ Gagal Menghapus Favicon", err.message);
+  }
+}
+
+async function resetAllSettings() {
+  if (!confirm("Peringatan: Apakah Anda yakin ingin mereset SEMUA pengaturan identitas website kembali ke default bawaan PingOn?")) {
+    return;
+  }
+
+  try {
+    const updated = await api("/api/settings/reset", { method: "POST" });
+    applyWebsiteIdentity(updated);
+    renderSettingsForm(updated);
+    showToast("up", "✓ Reset Selesai", "Identitas website telah dikembalikan ke bawaan PingOn.");
+  } catch (err) {
+    showToast("down", "✕ Gagal Reset", err.message);
   }
 }
 
@@ -3883,6 +4515,77 @@ function bindEvents() {
   const formChangePw = qs("form-change-password");
   if (formChangePw) formChangePw.addEventListener("submit", submitChangePasswordForm);
 
+  // Settings view events
+  const btnSaveGenSettings = qs("btn-save-general-settings");
+  if (btnSaveGenSettings) btnSaveGenSettings.addEventListener("click", saveGeneralSettings);
+
+  const btnResetSettings = qs("btn-reset-settings");
+  if (btnResetSettings) btnResetSettings.addEventListener("click", resetAllSettings);
+
+  // Logo file selection & drag/drop
+  const dropzoneLogo = qs("dropzone-logo");
+  const inputUploadLogo = qs("input-upload-logo");
+  const btnTriggerUploadLogo = qs("btn-trigger-upload-logo");
+  const btnDeleteLogo = qs("btn-delete-logo");
+
+  if (dropzoneLogo && inputUploadLogo) {
+    dropzoneLogo.addEventListener("click", () => inputUploadLogo.click());
+    dropzoneLogo.addEventListener("dragover", (e) => {
+      e.preventDefault();
+      dropzoneLogo.classList.add("dragover");
+    });
+    dropzoneLogo.addEventListener("dragleave", () => dropzoneLogo.classList.remove("dragover"));
+    dropzoneLogo.addEventListener("drop", (e) => {
+      e.preventDefault();
+      dropzoneLogo.classList.remove("dragover");
+      if (e.dataTransfer.files && e.dataTransfer.files[0]) {
+        handleLogoFileSelect(e.dataTransfer.files[0]);
+      }
+    });
+    inputUploadLogo.addEventListener("change", (e) => {
+      if (e.target.files && e.target.files[0]) {
+        handleLogoFileSelect(e.target.files[0]);
+      }
+    });
+  }
+  if (btnTriggerUploadLogo) btnTriggerUploadLogo.addEventListener("click", handleLogoUpload);
+  if (btnDeleteLogo) btnDeleteLogo.addEventListener("click", deleteLogo);
+
+  // Favicon file selection & drag/drop
+  const dropzoneFavicon = qs("dropzone-favicon");
+  const inputUploadFavicon = qs("input-upload-favicon");
+  const btnTriggerUploadFavicon = qs("btn-trigger-upload-favicon");
+  const btnDeleteFavicon = qs("btn-delete-favicon");
+
+  if (dropzoneFavicon && inputUploadFavicon) {
+    dropzoneFavicon.addEventListener("click", () => inputUploadFavicon.click());
+    dropzoneFavicon.addEventListener("dragover", (e) => {
+      e.preventDefault();
+      dropzoneFavicon.classList.add("dragover");
+    });
+    dropzoneFavicon.addEventListener("dragleave", () => dropzoneFavicon.classList.remove("dragover"));
+    dropzoneFavicon.addEventListener("drop", (e) => {
+      e.preventDefault();
+      dropzoneFavicon.classList.remove("dragover");
+      if (e.dataTransfer.files && e.dataTransfer.files[0]) {
+        handleFaviconFileSelect(e.dataTransfer.files[0]);
+      }
+    });
+    inputUploadFavicon.addEventListener("change", (e) => {
+      if (e.target.files && e.target.files[0]) {
+        handleFaviconFileSelect(e.target.files[0]);
+      }
+    });
+  }
+  if (btnTriggerUploadFavicon) btnTriggerUploadFavicon.addEventListener("click", handleFaviconUpload);
+  if (btnDeleteFavicon) btnDeleteFavicon.addEventListener("click", deleteFavicon);
+
+  // Live update simulated tab title on site name typing
+  qs("input-site-name")?.addEventListener("input", (e) => {
+    const simTitle = qs("simulated-tab-title");
+    if (simTitle) simTitle.textContent = e.target.value.trim() || "PingOn";
+  });
+
   // Clear change-password field errors on input
   qs("input-old-password")?.addEventListener("input", () => {
     qs("field-old-password")?.classList.remove("has-error");
@@ -4051,6 +4754,7 @@ async function init() {
   initCollapsible(qs("section-advanced-settings"), "pingon_collapse_advanced_settings", false);
   if (window.lucide) lucide.createIcons();
 
+  await fetchSettings();
   await initAuth();
   initIdleAutoLogout();
   await fetchDashboard({ showSkeleton: true });
