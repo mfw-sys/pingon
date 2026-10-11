@@ -663,6 +663,152 @@ table.data-table {
 }
 
 /* ============================================================
+   Manage Targets – Tree View
+   ============================================================ */
+.tree-view {
+  --tree-indent: 20px;
+  font-size: 0.875rem;
+  padding: 6px 0;
+}
+.tree-node {
+  position: relative;
+}
+/* Vertical connector line on the left for child nodes */
+.tree-node[data-level]:not([data-level="0"]):before {
+  content: "";
+  position: absolute;
+  top: 0;
+  bottom: 0;
+  left: calc(var(--tree-indent) * var(--node-level) - 8px);
+  width: 1px;
+  background: var(--glass-border);
+}
+.tree-group-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 16px 7px 0;
+  padding-left: calc(12px + var(--tree-indent) * var(--node-level));
+  cursor: pointer;
+  border-radius: 6px;
+  margin: 1px 8px;
+  color: var(--text-primary);
+  transition: background 0.12s ease;
+  user-select: none;
+  position: relative;
+}
+.tree-group-row:hover {
+  background: rgba(255, 255, 255, 0.05);
+}
+:root[data-theme="light"] .tree-group-row:hover {
+  background: rgba(20, 20, 40, 0.05);
+}
+.tree-group-row .tree-chevron {
+  width: 14px;
+  height: 14px;
+  color: var(--text-muted);
+  flex-shrink: 0;
+  transition: transform 0.15s ease;
+}
+.tree-node.collapsed .tree-group-row .tree-chevron {
+  transform: rotate(-90deg);
+}
+.tree-group-name {
+  font-weight: 600;
+  font-size: 0.875rem;
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.tree-group-meta {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  flex-shrink: 0;
+}
+.tree-group-count {
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  color: var(--text-muted);
+}
+.tree-node-body {
+  overflow: hidden;
+  transition: max-height 0.2s ease, opacity 0.15s ease;
+  max-height: 5000px;
+  opacity: 1;
+}
+.tree-node.collapsed .tree-node-body {
+  max-height: 0;
+  opacity: 0;
+}
+/* Target leaf row */
+.tree-target-row {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 6px 16px 6px 0;
+  padding-left: calc(12px + var(--tree-indent) * var(--node-level) + 22px);
+  border-radius: 6px;
+  margin: 1px 8px;
+  cursor: pointer;
+  transition: background 0.12s ease;
+  position: relative;
+}
+.tree-target-row:before {
+  content: "";
+  position: absolute;
+  left: calc(var(--tree-indent) * var(--node-level) + 4px);
+  top: 50%;
+  width: calc(var(--tree-indent) - 4px);
+  height: 1px;
+  background: var(--glass-border);
+}
+.tree-target-row:hover {
+  background: rgba(255, 255, 255, 0.04);
+}
+:root[data-theme="light"] .tree-target-row:hover {
+  background: rgba(20, 20, 40, 0.04);
+}
+.tree-target-name {
+  font-weight: 500;
+  color: var(--text-primary);
+  flex: 1;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.tree-target-host {
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+  min-width: 120px;
+  max-width: 180px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.tree-target-metric {
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+  color: var(--text-secondary);
+  min-width: 64px;
+  text-align: right;
+}
+.tree-target-actions {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  flex-shrink: 0;
+}
+/* Horizontal rule between sibling nodes */
+.tree-node + .tree-node {
+  border-top: none;
+}
+
+/* ============================================================
    Heartbeat (Uptime-Kuma-style availability timeline)
    ============================================================ */
 .heartbeat-current {
@@ -3684,6 +3830,201 @@ function renderTable(containerEl, targets) {
   if (window.lucide) lucide.createIcons();
 }
 
+function renderTargetsTree(containerEl, targets) {
+  if (!targets.length && (!groupsCache || !groupsCache.length)) {
+    containerEl.innerHTML = "";
+    const tpl = qs("tpl-empty-state").content.cloneNode(true);
+    containerEl.appendChild(tpl);
+    containerEl.querySelector(".btn-add-target-empty")?.addEventListener("click", () => openTargetModal(null));
+    if (window.lucide) lucide.createIcons();
+    return;
+  }
+
+  // Map group_id → targets
+  const targetMap = {};
+  targets.forEach((t) => {
+    const gid = t.group_id || 1;
+    (targetMap[gid] = targetMap[gid] || []).push(t);
+  });
+
+  let displayGroups = groupsCache.length ? [...groupsCache] : [{ id: 1, name: "Root", level: 0, full_path: "Root" }];
+  const renderedIds = new Set(displayGroups.map(g => g.id));
+  Object.keys(targetMap).forEach(gidStr => {
+    const gid = Number(gidStr);
+    if (!renderedIds.has(gid)) {
+      const gname = targetMap[gid][0]?.group_name || `Group ${gid}`;
+      displayGroups.push({ id: gid, name: gname, level: 0, full_path: gname });
+    }
+  });
+
+  function buildGroupHtml(g) {
+    const groupTargets = targetMap[g.id] || [];
+    const level = g.level || 0;
+    const isRoot = (g.name || "").toLowerCase() === "root";
+    const collapsed = isGroupCollapsed(g.id);
+    const hasTargets = groupTargets.length > 0;
+
+    // Status counts
+    let upCount = 0, downCount = 0, degradedCount = 0, pausedCount = 0;
+    groupTargets.forEach((t) => {
+      const s = (t.status || "UNKNOWN").toUpperCase();
+      if (s === "UP") upCount++;
+      else if (s === "DOWN") downCount++;
+      else if (s === "DEGRADED") degradedCount++;
+      else if (s === "PAUSED") pausedCount++;
+    });
+
+    let folderColor = "var(--navy-soft)";
+    if (downCount > 0) folderColor = "var(--red)";
+    else if (degradedCount > 0) folderColor = "var(--maroon)";
+    else if (upCount > 0) folderColor = "var(--green)";
+
+    const statusBadges = [];
+    if (downCount > 0) statusBadges.push(`<span class="badge badge-down" style="font-size:0.68rem;padding:1px 6px;"><i data-lucide="circle-x"></i> ${downCount}</span>`);
+    if (degradedCount > 0) statusBadges.push(`<span class="badge badge-degraded" style="font-size:0.68rem;padding:1px 6px;"><i data-lucide="alert-triangle"></i> ${degradedCount}</span>`);
+    if (upCount > 0) statusBadges.push(`<span class="badge badge-up" style="font-size:0.68rem;padding:1px 6px;"><i data-lucide="circle-check"></i> ${upCount}</span>`);
+    if (pausedCount > 0) statusBadges.push(`<span class="badge badge-paused" style="font-size:0.68rem;padding:1px 6px;"><i data-lucide="pause-circle"></i> ${pausedCount}</span>`);
+
+    const adminAddBtn = currentUser.role === "administrator" ? `
+      <button class="btn-icon btn-add-target-group" data-group-id="${g.id}" title="Add target to ${escapeHtml(g.name)}" style="width:26px;height:26px;" onclick="event.stopPropagation()">
+        <i data-lucide="plus" style="width:12px;height:12px;"></i>
+      </button>` : "";
+
+    const chevronIcon = hasTargets
+      ? `<i data-lucide="chevron-down" class="tree-chevron" style="${collapsed ? 'transform:rotate(-90deg)' : ''}"></i>`
+      : `<i data-lucide="minus" class="tree-chevron" style="opacity:0.25;"></i>`;
+
+    const defaultBadge = isRoot ? `<span class="badge" style="background:rgba(76,106,255,0.15);color:#8ba4ff;border-color:rgba(76,106,255,0.25);font-size:0.65rem;padding:1px 5px;">Default</span>` : "";
+
+    // Target leaf rows
+    const targetRows = groupTargets.map(t => {
+      const isPaused = (t.status || "").toUpperCase() === "PAUSED";
+      const key = (t.status || "UNKNOWN").toUpperCase();
+      const meta = STATUS_META[key] || { cls: "badge-unknown", icon: "circle-dashed" };
+      const label = GROUP_LABELS[key] || key;
+
+      const pauseResumeBtn = isPaused
+        ? `<button class="btn-icon btn-resume" title="Resume" data-id="${t.id}" style="width:26px;height:26px;"><i data-lucide="play"></i></button>`
+        : `<button class="btn-icon btn-pause" title="Pause" data-id="${t.id}" style="width:26px;height:26px;"><i data-lucide="pause"></i></button>`;
+
+      const adminActions = currentUser.role === "administrator" ? `
+        <button class="btn-icon btn-edit" title="Edit" data-id="${t.id}" style="width:26px;height:26px;"><i data-lucide="edit"></i></button>
+        ${pauseResumeBtn}
+        <button class="btn-icon icon-btn-danger btn-delete" title="Delete" data-id="${t.id}" style="width:26px;height:26px;"><i data-lucide="trash-2"></i></button>` : "";
+
+      return `
+        <div class="tree-target-row" data-id="${t.id}" style="--node-level:${level + 1}">
+          <span class="badge ${meta.cls}" style="font-size:0.68rem;padding:2px 7px;flex-shrink:0;">
+            <i data-lucide="${meta.icon}"></i> ${label}
+          </span>
+          <span class="tree-target-name">${escapeHtml(t.name)}</span>
+          <span class="tree-target-host hidden sm:block">${escapeHtml(t.host)}</span>
+          <span class="tree-target-metric hidden md:block">${isPaused ? "--" : fmtLatency(t.latency_avg)}</span>
+          <span class="tree-target-metric hidden lg:block">${isPaused ? "--" : fmtLoss(t.packet_loss)}</span>
+          <div class="tree-target-actions">
+            <button class="btn-icon btn-ping" title="Ping Now" data-id="${t.id}" style="width:26px;height:26px;"><i data-lucide="zap"></i></button>
+            ${adminActions}
+          </div>
+        </div>`;
+    }).join("");
+
+    return `
+      <div class="tree-node ${collapsed && hasTargets ? 'collapsed' : ''}" data-group-id="${g.id}" data-level="${level}" style="--node-level:${level}">
+        <div class="tree-group-row" data-group-id="${g.id}">
+          ${chevronIcon}
+          <i data-lucide="${hasTargets ? 'folder' : 'folder'}" style="width:16px;height:16px;color:${folderColor};flex-shrink:0;"></i>
+          <span class="tree-group-name">${escapeHtml(g.name)}</span>
+          ${defaultBadge}
+          ${g.description ? `<span class="tree-group-count hidden sm:inline" style="font-weight:400;color:var(--text-muted);">— ${escapeHtml(g.description)}</span>` : ""}
+          <div class="tree-group-meta">
+            ${statusBadges.join("")}
+            <span class="tree-group-count">${groupTargets.length} target${groupTargets.length === 1 ? "" : "s"}</span>
+            ${adminAddBtn}
+          </div>
+        </div>
+        <div class="tree-node-body">
+          ${targetRows}
+        </div>
+      </div>`;
+  }
+
+  containerEl.innerHTML = `<div class="tree-view">${displayGroups.map(buildGroupHtml).join("")}</div>`;
+
+  // Wire up group toggle
+  containerEl.querySelectorAll(".tree-group-row").forEach((row) => {
+    row.addEventListener("click", (e) => {
+      if (e.target.closest(".btn-add-target-group")) return;
+      const node = row.closest(".tree-node");
+      if (!node) return;
+      const gid = node.dataset.groupId;
+      const groupTargets = targetMap[Number(gid)] || [];
+      if (!groupTargets.length) return; // no targets, nothing to collapse
+      const nowCollapsed = !node.classList.contains("collapsed");
+      node.classList.toggle("collapsed", nowCollapsed);
+      setGroupCollapsed(gid, nowCollapsed);
+      const chevron = row.querySelector(".tree-chevron");
+      if (chevron) {
+        if (nowCollapsed) {
+          chevron.style.transform = "rotate(-90deg)";
+        } else {
+          chevron.style.transform = "";
+        }
+      }
+    });
+  });
+
+  // Add target to group
+  containerEl.querySelectorAll(".btn-add-target-group").forEach((btn) => {
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      openTargetModal(null, Number(btn.dataset.groupId));
+    });
+  });
+
+  // Open detail on row click
+  containerEl.querySelectorAll(".tree-target-row").forEach((row) => {
+    row.addEventListener("click", (e) => {
+      if (e.target.closest("button")) return;
+      openDetail(Number(row.dataset.id));
+    });
+  });
+
+  // Action buttons
+  containerEl.querySelectorAll(".btn-ping").forEach((btn) =>
+    btn.addEventListener("click", (e) => { e.stopPropagation(); pingNowFromRow(Number(btn.dataset.id), btn); })
+  );
+  containerEl.querySelectorAll(".btn-edit").forEach((btn) =>
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const target = state.targets.find((t) => t.id === Number(btn.dataset.id));
+      if (target) openTargetModal(target);
+    })
+  );
+  containerEl.querySelectorAll(".btn-delete").forEach((btn) =>
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const target = state.targets.find((t) => t.id === Number(btn.dataset.id));
+      if (target) openDeleteConfirm(target);
+    })
+  );
+  containerEl.querySelectorAll(".btn-pause").forEach((btn) =>
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const target = state.targets.find((t) => t.id === Number(btn.dataset.id));
+      if (target) openPauseConfirm(target);
+    })
+  );
+  containerEl.querySelectorAll(".btn-resume").forEach((btn) =>
+    btn.addEventListener("click", (e) => {
+      e.stopPropagation();
+      const target = state.targets.find((t) => t.id === Number(btn.dataset.id));
+      if (target) openResumeConfirm(target);
+    })
+  );
+
+  if (window.lucide) lucide.createIcons();
+}
+
 function renderSkeletonTable(containerEl) {
   const skeletonRow = () => `
     <tr>
@@ -3711,12 +4052,32 @@ function renderSkeletonTable(containerEl) {
     </div>`;
 }
 
+function renderSkeletonTree(containerEl) {
+  const skeletonLeaf = () => `
+    <div class="tree-target-row" style="--node-level:1; pointer-events:none;">
+      <div class="skeleton" style="height:20px;width:64px;border-radius:12px;flex-shrink:0;"></div>
+      <div class="skeleton" style="height:13px;width:130px;"></div>
+      <div class="skeleton" style="height:13px;width:90px;"></div>
+    </div>`;
+  containerEl.innerHTML = `
+    <div class="tree-view">
+      <div class="tree-node" style="--node-level:0;">
+        <div class="tree-group-row" style="pointer-events:none;">
+          <div class="skeleton" style="height:14px;width:14px;border-radius:3px;"></div>
+          <div class="skeleton" style="height:14px;width:14px;border-radius:3px;"></div>
+          <div class="skeleton" style="height:14px;width:140px;"></div>
+        </div>
+        <div class="tree-node-body">${skeletonLeaf()}${skeletonLeaf()}${skeletonLeaf()}</div>
+      </div>
+    </div>`;
+}
+
 /* ------------------------------------------------ Dashboard fetch -- */
 
 async function fetchDashboard({ showSkeleton = false } = {}) {
   if (showSkeleton) {
     renderSkeletonTable(qs("dashboard-table-wrap"));
-    renderSkeletonTable(qs("targets-table-wrap"));
+    renderSkeletonTree(qs("targets-table-wrap"));
   }
   try {
     if (!groupsCache.length) {
@@ -3733,7 +4094,7 @@ async function fetchDashboard({ showSkeleton = false } = {}) {
     qs("last-update").textContent = fmtClock(data.last_update);
 
     renderTable(qs("dashboard-table-wrap"), data.targets);
-    renderTable(qs("targets-table-wrap"), data.targets);
+    renderTargetsTree(qs("targets-table-wrap"), data.targets);
 
     checkStatusChanges(data.targets);
     setSystemStatus(true);
